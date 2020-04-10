@@ -65,8 +65,8 @@ class Block:
 
 class Bank:
 
-    hash_to_blocks = {}
-    utxo = list()
+    hash_to_blocks = None
+    utxo = None
     mempool = None
     blockchain = None
 
@@ -74,6 +74,8 @@ class Bank:
         """Creates a bank with an empty blockchain and an empty mempool."""
         self.mempool = list()
         self.blockchain = GENESIS_BLOCK_PREV # BlockChain is set to the last block Hash in the chain
+        self.utxo = list()
+        self.hash_to_blocks = dict()
 
 
     def add_transaction_to_mempool(self, transaction: Transaction) -> bool:
@@ -176,7 +178,7 @@ class Bank:
         We assume only the bank calls this function (wallets will never call it).
         """
         random_signature = secrets.token_bytes(48)
-        new_transaction = Transaction(target, None, random_signature)
+        new_transaction = Transaction(target, None, random_signature) # needs to hash the target too?
         self.mempool.append(new_transaction)
 
     def update_unspent_transtactions_after_block_creation(self, new_transactions):
@@ -195,7 +197,7 @@ class Wallet:
     private_key = None
     public_key = None
     number_coins = 0
-    unspent_transactions_id = set()
+    unspent_transactions_id  = None
     prev_block_updated = GENESIS_BLOCK_PREV
 
     def __init__(self) -> None:
@@ -204,6 +206,7 @@ class Wallet:
         """
         self.private_key = ecdsa.SigningKey.generate()
         self.public_key = PublicKey(self.private_key.get_verifying_key().to_der())
+        self.unspent_transactions_id = set()
 
     def update(self, bank: Bank) -> None:
         """
@@ -228,7 +231,7 @@ class Wallet:
             return None
 
         unspent_transaction = list(self.unspent_transactions_id)[0]
-        signature = self.private_key.sign(target + unspent_transaction) # TODO this is the way!!!!
+        signature = self.private_key.sign(target + unspent_transaction)
         return Transaction(target, unspent_transaction, signature)
 
 
