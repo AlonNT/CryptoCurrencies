@@ -1,6 +1,5 @@
 from ex1 import *
 
-
 def test_block(bank: Bank, alice: Wallet, bob: Wallet, alice_coin: Transaction) -> None:
     hash1 = bank.get_latest_hash()
     block = bank.get_block(hash1)
@@ -121,3 +120,5 @@ def test_double_spend_fail(bank: Bank, alice: Wallet, bob: Wallet, charlie: Wall
     assert alice.get_balance() == 0
     assert bob.get_balance() == 1
     assert charlie.get_balance() == 0
+
+
