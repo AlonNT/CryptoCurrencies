@@ -51,6 +51,7 @@ class Transaction:
                  the output, input and the signature.
                  Note that if the input is None then it's regarded as empty bytes in the concatenation.
         """
+
         input_bytes = bytes() if self.input is None else self.input
         tx_content = self.output + input_bytes + self.signature
         tx_id = TxID(hash_function(tx_content))
