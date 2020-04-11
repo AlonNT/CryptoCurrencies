@@ -1,0 +1,18 @@
+Name:  Alon Netser
+ID:    31160253-6
+login: alonnetser
+
+Name:  Daniel Afrimi
+ID:    203865837
+login: daniel023
+
+In this project we implemented very naive simple prototype of a secure payment system,
+which relies on a single trusted authority - the Bank.
+
+A few notes:
+* We implemented the transactions hash in a block using a merkle-tree.
+* Each wallet has a list of coins that are associated with him, as well as a list of
+  unspent-coins, meaning it didn't already spend them (using transaction that maybe
+  did not enter the blockchain yet).
+  The wallet can try to spend the same coind multiple times by calling the function unfreeze_all
+  which initialize the unspent_coins list back to the whole coins list of the wallet.

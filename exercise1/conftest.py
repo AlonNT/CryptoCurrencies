@@ -1,5 +1,5 @@
 import pytest
-from .ex1 import Wallet, Bank
+from ex1 import Wallet, Bank
 
 
 @pytest.fixture
