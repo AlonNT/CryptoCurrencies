@@ -3,8 +3,8 @@ ID:    31160253-6
 login: alonnetser
 
 Name:  Daniel Afrimi
-ID:    ?????????
-login: ???????????
+ID:    203865837
+login: daniel023
 
 In this project we implemented very naive simple prototype of a secure payment system,
 which relies on a single trusted authority - the Bank.
