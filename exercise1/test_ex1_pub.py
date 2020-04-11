@@ -241,7 +241,6 @@ def test_transaction_to_myself(bank: Bank, alice: Wallet, alice_coin: Transactio
 
 def test_chain_transactions(bank: Bank, alice: Wallet, bob: Wallet, charlie: Wallet, alice_coin: Transaction) -> None:
     tx = alice.create_transaction(bob.get_address())
-    tx_input = tx.input
     assert tx is not None
     assert bank.add_transaction_to_mempool(tx)
     bank.end_day()
