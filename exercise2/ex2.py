@@ -183,7 +183,7 @@ class Node:
         self.public_key: PublicKey = PublicKey(self.private_key.get_verifying_key().to_der())
 
         # These are the TxIDs of the transactions in the blockchain that their output is this Node's public_key.
-        self.coins: List[TxID] = list()
+        self.coins: List[TxID] = list()  # TODO handle this... same as 'update' in ex1
 
         # These are the TxIDs of the transactions in the blockchain that their output is this Node's public_key.
         # BUT - this Node didn't use them already in creating new transactions
@@ -409,8 +409,13 @@ class Node:
             # Remove the block from the blockchain (and from the dictionary mapping block-hash to index in blockchain).
             self.block_hash_to_index.pop(self.blockchain.pop().get_block_hash())
 
-            # Remove the transactions in the UTxO that are in this block, because it is becoming a stale block.
-            self.utxo = [unspent_tx for unspent_tx in self.utxo if unspent_tx not in transactions]
+        # Remove the transactions in the UTxO that removed from the blockchain.
+        self.utxo = [unspent_tx for unspent_tx in self.utxo if unspent_tx not in removed_transactions]
+
+        # TODO is it enough?
+        # Remove the coins that were spent in transactions that made it into the blockchain.
+        self.coins = [coin for coin in self.coins if coin in self.utxo]
+        self.unspent_coins = [coin for coin in self.unspent_coins if coin in self.utxo]
 
         return list(removed_transactions)
 
@@ -440,6 +445,35 @@ class Node:
 
         return removed_transactions
 
+    def update_coins(self, new_chain: List[Block]) -> None:
+        """
+        This function updates the balance allocated to this wallet by querying the bank.
+        Don't read all of the bank's utxo, but rather process the blocks since the last update one at a time.
+        For this exercise, there is no need to validate all transactions in the block
+
+        :param new_chain: The new chain that will replace the existing one.
+        """
+        # Create 2 lists - coins_to_add and coins_to_remove.
+        # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
+        # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
+        coins_to_add: List[TxID] = list()
+        coins_to_remove: List[TxID] = list()
+        for block in new_chain:
+            for tx in block.get_transactions():
+                if tx.output == self.public_key:
+                    coins_to_add.append(tx.get_txid())
+                if tx.input in self.coins:
+                    coins_to_remove.append(tx.input)
+
+        # Remove the coins that were spent in transactions that made it into the blockchain.
+        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
+        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
+
+        # Add the coins that were sent to this address, found in transactions in the blockchain
+        # (in the relevant part of the blockchain, meaning from the last time we updated).
+        self.coins.extend(coins_to_add)
+        self.unspent_coins.extend(coins_to_add)
+
     def reorg(self, new_chain: List[Block]) -> None:
         """
         Replace between the current blockchain and the new one.
@@ -448,6 +482,8 @@ class Node:
         """
         removed_transactions: List[Transaction] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
         removed_transactions: List[Transaction] = self.append_new_chain(new_chain, removed_transactions)
+
+        self.update_coins(new_chain)
 
         transactions: List[Transaction] = self.mempool + removed_transactions
         self.clear_mempool()
@@ -578,6 +614,8 @@ class Node:
         # Generate a new block and append it to the blockchain.
         block: Block = Block(previous_block_hash=self.get_latest_hash(), transactions=transactions_to_add)
         block_hash: BlockHash = self.add_to_blockchain(block)
+
+        self.update_coins([block])
 
         self.notify_latest_block_to_all_connections()
 
