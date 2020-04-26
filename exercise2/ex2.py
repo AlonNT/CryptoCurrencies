@@ -100,13 +100,16 @@ class Transaction:
         return TxID(hash_function(tx_content))
 
     # TODO Define the UTxO as a set (cast it to list when returning it in get_utxo to comply with the API).
-    # TODO then we'll need this function...
-    # def __hash__(self):
-    #     """
-    #     This function is implemented to enable storing the Transaction object in hashable containers (such as a set).
-    #     :return: The hash of this Transaction object.
-    #     """
-    #     return int.from_bytes(self.get_txid(), byteorder=sys.byteorder)
+    def __hash__(self):
+        """
+        This function is implemented to enable storing the Transaction object in hashable containers (such as a set).
+        Note that it's crucial for the test_longer_chain_overtake because there is
+        assert set(bob.get_utxo()) == set(alice.get_utxo())
+        So in order to create a set of transactions it must be hashable.
+
+        :return: The hash of this Transaction object.
+        """
+        return int.from_bytes(self.get_txid(), byteorder=sys.byteorder)
 
     def __eq__(self, other: 'Transaction'):
         """
@@ -263,10 +266,13 @@ class Node:
         :param transaction: The transaction to notify about.
         """
         for node in self.connections:
-            addition_to_mempool_was_successful = node.add_transaction_to_mempool(transaction)
+            node.add_transaction_to_mempool(transaction)  # TODO whould we do something if it fails?
+            # addition_to_mempool_was_successful = node.add_transaction_to_mempool(transaction)
             # TODO what should happen in the transaction is already in the other node's MemPool?
             # TODO Should False be returned or True?
-            assert addition_to_mempool_was_successful, "Addition to the connected node MemPool failed."  # TODO remove
+            # if not addition_to_mempool_was_successful:
+            #     stop = 'here'
+            # assert addition_to_mempool_was_successful, "Addition to the connected node MemPool failed."  # TODO remove
 
     def verify_transaction_validity(self, transaction: Transaction) -> bool:
         """
@@ -348,7 +354,8 @@ class Node:
             try:
                 block: Block = sender.get_block(block_hash)
             except ValueError:
-                assert False, "WTF? The sender notified about a block but he does not have it..."  # TODO remove
+                return list()  # TODO what should we do in this case?
+                # assert False, "WTF? The sender notified about a block but he does not have it..."  # TODO remove
 
             # It is possible that a "bad" node will return a block with a different hash than requested.
             # See https://moodle2.cs.huji.ac.il/nu19/mod/forum/discuss.php?d=63881#p92491
@@ -378,8 +385,8 @@ class Node:
             # TODO verify the block-hash?
             transactions: List[Transaction] = block.get_transactions()
             amount_of_money_creation_is_valid: bool = (1 == sum(tx.input is None for tx in transactions))
-            transactions_are_valid: bool = all(self.verify_transaction_validity(tx)
-                                               for tx in block.get_transactions() if tx.input is not None)
+            transactions_are_valid: bool = all(self.verify_transaction_validity(tx) for tx in transactions
+                                               if tx.input is not None and tx not in self.mempool)  # TODO is it okay? (and tx not in self.mempool)
             block_size_is_valid: bool = (len(transactions) <= BLOCK_SIZE)
 
             # If this block is not valid, discard it and the rest of the chain.
@@ -396,26 +403,51 @@ class Node:
         :param common_ancestor: The block hash that will be the last block in the new blockchain.
         :return: A list of transactions that were removed from the blockchain (will be added to the MemPool later).
         """
-        assert common_ancestor in self.block_hash_to_index, "The given common_ancestor is not in the blockchain."
+        assert (common_ancestor == GENESIS_BLOCK_PREV) or (common_ancestor in self.block_hash_to_index), \
+            "The previous block of the first block in the new chain must exist in the current node's chain."
 
         removed_transactions: Deque[Transaction] = deque()
         curr_hash: BlockHash = self.get_latest_hash()
 
         while curr_hash != common_ancestor:
-            block: Block = self.blockchain[self.block_hash_to_index[curr_hash]]
+            assert self.block_hash_to_index[curr_hash] == len(self.blockchain) - 1, \
+                "We are removing blocks from the end of the blockchain. " \
+                "Otherwise the block_hash_to_index will be wrong."  # TODO remove
+
+            block: Block = self.get_block(curr_hash)
             transactions: List[Transaction] = block.get_transactions()
             removed_transactions.extendleft(transactions)
 
             # Remove the block from the blockchain (and from the dictionary mapping block-hash to index in blockchain).
-            self.block_hash_to_index.pop(self.blockchain.pop().get_block_hash())
+            self.blockchain.pop()
+            self.block_hash_to_index.pop(curr_hash)
 
-        # Remove the transactions in the UTxO that removed from the blockchain.
-        self.utxo = [unspent_tx for unspent_tx in self.utxo if unspent_tx not in removed_transactions]
+            curr_hash = block.get_prev_block_hash()
 
-        # TODO is it enough?
+        # Extend the UTxO with the input TxID of transactions that were removed from the blockchain
+        # (since now these transactions are un-spent). Note that if such transaction's source
+        # is in the same removed transactions list, it will be removed in the next line.
+        # TODO should add the transaction itself, not the TxiD. Maybe save all transactions in the blockchain in a dict?
+        # self.utxo.extend([tx.input for tx in removed_transactions])
+
+        # Remove the transactions in the UTxO that were removed from the blockchain.
+        self.utxo = [tx for tx in self.utxo if tx not in removed_transactions]
+
+        # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
+        # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
+        # TODO We want to access a transaction's output via its TxID.
+        # TODO Maybe save all transactions in the blockchain in a dict?
+        # coins_to_add: List[TxID] = [tx.input for tx in removed_transactions if tx.input.output == self.public_key]
+        coins_to_remove: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+
+        # # Add the coins that were sent to this address, found in transactions in the blockchain
+        # # (in the relevant part of the blockchain, meaning from the last time we updated).
+        # self.coins.extend(coins_to_add)
+        # self.unspent_coins.extend(coins_to_add)
+
         # Remove the coins that were spent in transactions that made it into the blockchain.
-        self.coins = [coin for coin in self.coins if coin in self.utxo]
-        self.unspent_coins = [coin for coin in self.unspent_coins if coin in self.utxo]
+        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
+        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
 
         return list(removed_transactions)
 
@@ -453,26 +485,24 @@ class Node:
 
         :param new_chain: The new chain that will replace the existing one.
         """
-        # Create 2 lists - coins_to_add and coins_to_remove.
+        # TODO test this function when given a chain of blocks that some coins are aassigned to me
+        # TODO but I spent them later in the chain.
+
+        transactions: List[Transaction] = [tx for block in new_chain for tx in block.get_transactions()]
+
         # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
         # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
-        coins_to_add: List[TxID] = list()
-        coins_to_remove: List[TxID] = list()
-        for block in new_chain:
-            for tx in block.get_transactions():
-                if tx.output == self.public_key:
-                    coins_to_add.append(tx.get_txid())
-                if tx.input in self.coins:
-                    coins_to_remove.append(tx.input)
-
-        # Remove the coins that were spent in transactions that made it into the blockchain.
-        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
-        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
+        coins_to_add: List[TxID] = [tx.get_txid() for tx in transactions if tx.output == self.public_key]
+        coins_to_remove: List[TxID] = [tx.input for tx in transactions if tx.input in self.coins]
 
         # Add the coins that were sent to this address, found in transactions in the blockchain
         # (in the relevant part of the blockchain, meaning from the last time we updated).
         self.coins.extend(coins_to_add)
         self.unspent_coins.extend(coins_to_add)
+
+        # Remove the coins that were spent in transactions that made it into the blockchain.
+        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
+        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
 
     def reorg(self, new_chain: List[Block]) -> None:
         """
@@ -499,7 +529,8 @@ class Node:
                            (the first block in the tail is the block with previous block hash equal to this block_hash).
         :return: The length of the tail (zero of the block already exists in the blockchain.
         """
-        assert block_hash in self.block_hash_to_index, "The given block_hash does not exist in the blockchain."
+        assert (block_hash == GENESIS_BLOCK_PREV) or (block_hash in self.block_hash_to_index), \
+            "The given block_hash does not exist in the blockchain."
 
         length_of_current_chain: int = 0
         curr_hash: BlockHash = self.get_latest_hash()
