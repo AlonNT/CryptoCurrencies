@@ -182,6 +182,10 @@ class Node:
         # instead of iterating the blockchain which takes O(len(blockchain)).
         self.block_hash_to_index: Dict[BlockHash, int] = dict()
 
+        # This is used in order to get the block given the BlockHash in O(1),
+        # instead of iterating the blockchain which takes O(len(blockchain)).
+        self.txid_to_blockhash: Dict[TxID, BlockHash] = dict()
+
         self.private_key: ecdsa.SigningKey = ecdsa.SigningKey.generate()
         self.public_key: PublicKey = PublicKey(self.private_key.get_verifying_key().to_der())
 
@@ -396,6 +400,26 @@ class Node:
 
         return new_chain
 
+    def get_transaction(self, txid: TxID) -> Optional[Transaction]:
+        """
+        Get a transaction given its TxID.
+        This is done in O(1) since we save a mapping between TxID and the block-hash
+        which holds this transaction in the blockchain.
+        Iterating over the transactions in the block is also O(1) because the block is bounded in size
+        (in this exercise maximum 10 transactions, but also in real life it's bounded,
+        as opposed to the blockchain that is "unbounded" and it's indeed very long).
+        :param txid: The TxID of a transaction in the blockchain to get.
+        :return: The transaction.
+                 returns None if it is not in the blockchain (should no happen, there is even an assert).
+        """
+        block_hash: BlockHash = self.txid_to_blockhash[txid]
+        block: Block = self.get_block(block_hash)
+        for tx in block.get_transactions():
+            if tx.get_txid() == txid:
+                return tx
+
+        assert False, "The transaction was not found in the blockchain."
+
     def remove_existing_chain(self, common_ancestor: BlockHash) -> List[Transaction]:
         """
         Remove the existing chain in the blockchain, starting from the next block after the given common_ancestor
@@ -424,30 +448,38 @@ class Node:
 
             curr_hash = block.get_prev_block_hash()
 
+        removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+
+        for txid in removed_txids:
+            assert txid in self.txid_to_blockhash, \
+                "A transaction that was removed from the blockchain does not exists in txid_to_blockhash."
+            self.txid_to_blockhash.pop(txid)
+
+        # Keep only the removed transactions with input in the blockchain (and not in the removed blocks).
+        # These transactions' inputs should be added to the UTxO, since they now are un-spent.
+        removed_transactions_with_input_in_blockchain: List[Transaction] = [tx for tx in removed_transactions
+                                                                            if tx.input not in removed_txids
+                                                                            and tx.input is not None]
+
         # Extend the UTxO with the input TxID of transactions that were removed from the blockchain
-        # (since now these transactions are un-spent). Note that if such transaction's source
-        # is in the same removed transactions list, it will be removed in the next line.
-        # TODO should add the transaction itself, not the TxiD. Maybe save all transactions in the blockchain in a dict?
-        # self.utxo.extend([tx.input for tx in removed_transactions])
+        # and that the input-transaction was not in this removed transactions list.
+        # Now these transactions are un-spent.
+        self.utxo.extend([self.get_transaction(tx.input) for tx in removed_transactions_with_input_in_blockchain])
 
         # Remove the transactions in the UTxO that were removed from the blockchain.
-        self.utxo = [tx for tx in self.utxo if tx not in removed_transactions]
+        self.utxo = [tx for tx in self.utxo if tx.get_txid() not in removed_txids]
 
-        # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
-        # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
-        # TODO We want to access a transaction's output via its TxID.
-        # TODO Maybe save all transactions in the blockchain in a dict?
-        # coins_to_add: List[TxID] = [tx.input for tx in removed_transactions if tx.input.output == self.public_key]
-        coins_to_remove: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+        # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this node.
+        # coins_to_remove are the coins in the new blocks in the blockchain that this node used.
+        coins_to_add: List[TxID] = list()
+        for tx in removed_transactions_with_input_in_blockchain:
+            input_txid: TxID = tx.input
+            input_tx: Transaction = self.get_transaction(input_txid)
+            if input_tx.output == self.public_key:
+                coins_to_add.append(input_txid)
 
-        # # Add the coins that were sent to this address, found in transactions in the blockchain
-        # # (in the relevant part of the blockchain, meaning from the last time we updated).
-        # self.coins.extend(coins_to_add)
-        # self.unspent_coins.extend(coins_to_add)
-
-        # Remove the coins that were spent in transactions that made it into the blockchain.
-        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
-        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
+        self.coins.extend(coins_to_add)
+        self.unspent_coins.extend(coins_to_add)
 
         return list(removed_transactions)
 
@@ -474,6 +506,8 @@ class Node:
             # because they don't need to enter the MemPool later.
             removed_transactions: List[Transaction] = [tx for tx in removed_transactions if tx not in transactions]
             self.add_to_blockchain(block)
+
+        self.update_coins(new_chain)
 
         return removed_transactions
 
@@ -513,8 +547,7 @@ class Node:
         removed_transactions: List[Transaction] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
         removed_transactions: List[Transaction] = self.append_new_chain(new_chain, removed_transactions)
 
-        self.update_coins(new_chain)
-
+        # Now try to add the transactions to the MemPool.
         transactions: List[Transaction] = self.mempool + removed_transactions
         self.clear_mempool()
 
@@ -610,11 +643,15 @@ class Node:
         self.block_hash_to_index.update({block_hash: len(self.blockchain)})
         self.blockchain.append(block)
 
+        # Add the transactions in this block to the mapping to the corresponding block-hash.
+        self.txid_to_blockhash.update({tx.get_txid(): block_hash for tx in transactions})
+
         # Add the new transactions to the UTxO.
-        # Note the not all the transactions in transactions_to_add are un-spent, TODO is it really possible?
+        # Note the not all the transactions in transactions_to_add are un-spent,
         # but this will be fixed in the next for-loop.
         self.utxo.extend(transactions)
 
+        # TODO is it really possible? If not, delete this code...
         # Remove the transactions in the UTxO that were spent in any of the transaction in the transactions that
         # were added to the blockchain.
         self.utxo = [tx for tx in self.utxo if tx.get_txid() not in [tx.input for tx in transactions]]

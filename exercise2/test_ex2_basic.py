@@ -280,11 +280,11 @@ def test_tx_replaced_in_blockchain_when_double_spent(alice: Node, bob: Node, cha
     assert tx1 not in alice.get_mempool()
     tx2 = alice.create_transaction(charlie.get_address())
     assert tx2 is not None
-    assert tx2 in alice.get_mempool()
-    alice.mine_block()
-    alice.mine_block()
+    assert tx2 in alice.get_mempool()  # TODO it's not in charlie.get_mempool()
+    alice.mine_block()  # TODO charlie's blockchain is not updating
+    alice.mine_block()  # TODO charlie's blockchain is not updating
     assert tx2 in alice.get_utxo()
-    alice.connect(bob)
+    alice.connect(bob)  # TODO bob rejects the last 2 blocks (out of 5) in alice's blockchain.
     assert tx2 in bob.get_utxo()
     assert tx1 not in bob.get_utxo()
     assert tx1 not in bob.get_mempool()
