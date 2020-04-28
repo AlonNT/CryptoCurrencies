@@ -98,6 +98,7 @@ def test_node_does_not_update_when_alternate_chain_does_not_lead_to_genesis(alic
     evil_node = evil_node_maker([block1, block2, block3])
 
     alice.notify_of_block(block3.get_block_hash(), evil_node)
+    assert alice.get_latest_hash() == GENESIS_BLOCK_PREV
 
 
 def test_node_does_not_fully_update_when_some_transaction_is_bad(alice: Node, bob: Node, evil_node_maker: EvilNodeMaker,
@@ -210,7 +211,7 @@ def test_connections_propagate_txs(alice: Node, bob: Node, charlie: Node) -> Non
     assert tx not in charlie.get_mempool()
 
 
-def test_block_hash(alice: Node) -> None:
+def test_block_hash(alice: Node, evil_node_maker: EvilNodeMaker, make_key: KeyFactory) -> None:
     block_hash1 = alice.mine_block()
     block1 = alice.get_block(block_hash1)
     assert block1.get_block_hash() == block_hash1
@@ -224,6 +225,17 @@ def test_block_hash(alice: Node) -> None:
     assert block2.get_block_hash() != block_hash1
     assert block3.get_block_hash() != block_hash1
     assert block4.get_block_hash() != block_hash1
+
+    # Additions
+    block5 = Block(block3.get_block_hash(), [])
+    mock_node = evil_node_maker([block1, block3, block5])
+    alice.notify_of_block(mock_node.get_latest_hash(), mock_node)
+
+    assert block1 == alice.get_block(block1.get_block_hash())
+    with pytest.raises(Exception):
+        alice.get_block(block3.get_block_hash())
+    with pytest.raises(Exception):
+        alice.get_block(block5.get_block_hash())
 
 
 def test_catching_up_after_disconnect(alice: Node, bob: Node) -> None:
@@ -256,7 +268,7 @@ def test_tx_surives_in_mempool_if_not_included_in_block(alice: Node, bob: Node) 
     block_hash = alice.mine_block()
     bob.connect(alice)
     assert bob.get_latest_hash() == block_hash
-    assert len(bob.get_mempool()) == 1
+    assert len(bob.get_mempool()) == 1  # TODO it's also in alice's MemPool, is it OK? Why does it happen?
 
 
 def test_tx_replaced_in_blockchain_when_double_spent(alice: Node, bob: Node, charlie: Node) -> None:
@@ -304,3 +316,80 @@ def test_bob_serves_wrong_block(alice: Node, bob: Node, charlie: Node, monkeypat
     alice.connect(bob)
     assert alice.get_latest_hash() == GENESIS_BLOCK_PREV
     assert alice.get_utxo() == []
+
+
+def test_same_tx_in_both_chains(alice: Node, bob: Node, charlie: Node) -> None:
+    alice.connect(bob)
+    block1_hash = alice.mine_block()
+    assert alice.get_block(block1_hash)
+    assert alice.get_balance() == 1
+    assert len(alice.get_utxo()) == 1
+
+    tx = alice.create_transaction(bob.get_address())
+    assert alice.get_balance() == 1
+    assert bob.get_balance() == 0
+    assert tx in alice.get_mempool()
+    assert tx in bob.get_mempool()
+
+    tx_impossible = bob.create_transaction(alice.get_address())
+    assert tx_impossible is None
+
+    block2_hash = bob.mine_block()
+    assert alice.get_balance() == 0
+    assert bob.get_balance() == 2
+    assert tx in bob.get_block(block2_hash).get_transactions()
+    assert tx in bob.get_utxo()
+    assert len(alice.get_mempool()) == 0
+    assert len(bob.get_mempool()) == 0
+
+    tx2_1 = bob.create_transaction(alice.get_address())
+    tx2_2 = bob.create_transaction(alice.get_address())
+    assert bob.create_transaction(alice.get_address()) is None
+    assert bob.get_balance() == 2
+    bob.clear_mempool()
+    assert bob.get_balance() == 2
+
+    assert (tx2_1 in alice.get_mempool()) and (tx2_2 in alice.get_mempool())
+    assert len(bob.get_mempool()) == 0
+
+    bob.disconnect_from(alice)
+    bob.disconnect_from(alice)      # Nothing should happen
+    bob.disconnect_from(charlie)    # Nothing should happen
+    alice.disconnect_from(bob)      # Nothing should happen
+
+    block3_hash = alice.mine_block()
+    assert alice.get_balance() == 3
+    assert bob.get_balance() == 2       # Bob does not know about the update yet
+    assert len(alice.get_mempool()) == 0
+
+    tx3 = bob.create_transaction(bob.get_address())
+    assert [tx3] == bob.get_mempool()
+    block4_hash = bob.mine_block()
+    assert len(bob.get_mempool()) == 0
+    block5_hash = bob.mine_block()
+    assert alice.get_balance() == 3
+    assert bob.get_balance() == 4
+
+    assert alice.get_block(block3_hash)
+    assert bob.get_block(block4_hash)
+    assert bob.get_block(block5_hash)
+
+    alice.connect(bob)
+
+    with pytest.raises(ValueError):
+        alice.get_block(block3_hash)
+    with pytest.raises(ValueError):
+        bob.get_block(block3_hash)
+
+    assert alice.get_balance() == 0
+    assert bob.get_balance() == 4
+    assert (tx2_1 in bob.get_mempool()) != (tx2_2 in bob.get_mempool()), \
+        "Exactly one of them should be in the MemPool, since we are restoring transactions that can still happen"
+    assert (tx2_1 in alice.get_mempool()) != (tx2_2 in alice.get_mempool()), \
+        "Exactly one of them should be in the MemPool, since we are restoring transactions that can still happen"
+
+    block6_hash = alice.mine_block()
+
+    assert alice.get_block(block6_hash)
+    assert alice.get_balance() == 2
+    assert bob.get_balance() == 3

@@ -98,6 +98,7 @@ def test_node_does_not_update_when_alternate_chain_does_not_lead_to_genesis(alic
     evil_node = evil_node_maker([block1, block2, block3])
 
     alice.notify_of_block(block3.get_block_hash(), evil_node)
+    assert alice.get_latest_hash() == GENESIS_BLOCK_PREV
 
 
 def test_node_does_not_fully_update_when_some_transaction_is_bad(alice: Node, bob: Node, evil_node_maker: EvilNodeMaker,

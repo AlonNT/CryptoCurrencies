@@ -197,9 +197,6 @@ class Node:
         # (that maybe didn't made it into the blockchain yet).
         self.unspent_coins: List[TxID] = list()
 
-        # The index of the last block we read in the blockchain to update the Node's balance.
-        self.last_block_index_used_for_update: int = -1
-
         # This is the list of all the connections this Node has.
         self.connections: Set[Node] = set()
 
@@ -814,14 +811,12 @@ class Node:
         """
         return self.public_key
 
-    # TODO are the two functions below really needed? comment-out and check...
     def __hash__(self):
         """
         This function is implemented to enable storing the Node object in hashable containers (such as a set).
         :return: The hash of this Node object.
         """
         return int.from_bytes(self.public_key, byteorder=sys.byteorder)
-        # return self.public_key
 
     def __eq__(self, other: 'Node'):
         """
