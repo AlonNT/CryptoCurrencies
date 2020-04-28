@@ -353,18 +353,17 @@ class Node:
         while (block_hash not in self.block_hash_to_index) and (block_hash != GENESIS_BLOCK_PREV):
             # If the block_hash was already seen this means there is a circle in the new blockchain.
             if block_hash in already_seen_block_hashes_set:
-                return list()  # TODO what should we do in this case?
+                return list()
 
             try:
                 block: Block = sender.get_block(block_hash)
             except ValueError:
-                return list()  # TODO what should we do in this case?
-                # assert False, "WTF? The sender notified about a block but he does not have it..."  # TODO remove
+                return list()
 
             # It is possible that a "bad" node will return a block with a different hash than requested.
             # See https://moodle2.cs.huji.ac.il/nu19/mod/forum/discuss.php?d=63881#p92491
             if block.get_block_hash() != block_hash:
-                return list()  # TODO what should we do in this case?
+                return list()
 
             new_chain.append(block)
             already_seen_block_hashes_set.add(block_hash)
@@ -420,7 +419,49 @@ class Node:
 
         assert False, "The transaction was not found in the blockchain."
 
-    def remove_existing_chain(self, common_ancestor: BlockHash) -> List[Transaction]:
+    def update_utxo_and_coins(self, removed_chain: List[Block]):
+        """
+        Update the UTxO and the coins assigned to this node, according to the removed transactions.
+        Some transactions are now un-spent (because we removed a transaction that used
+        some input transaction, so the input transaction is now un-spent).
+        Some transactions were un-spent and now does not exists so they need to be removed.
+
+        :param removed_chain: The list of all transactions that were removed from the blockchain.
+        """
+        removed_transactions = [tx for block in removed_chain for tx in block.get_transactions()]
+        removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+
+        # Keep only the removed transactions with input in the blockchain (and not in the removed blocks).
+        # These transactions' inputs should be added to the UTxO, since they now are un-spent.
+        removed_transactions_with_input_in_blockchain: List[Transaction] = [tx for tx in removed_transactions
+                                                                            if tx.input not in removed_txids
+                                                                            and tx.input is not None]
+        # Input transactions the are now unspent, because they were used in transactions in the removed blocks.
+        input_transactions_now_unspent: List[Transaction] = [self.get_transaction(tx.input)
+                                                             for tx in removed_transactions_with_input_in_blockchain]
+        # Extend the UTxO with the input TxID of transactions that were removed from the blockchain
+        # and that the input-transaction was not in this removed transactions list.
+        # Now these transactions are un-spent.
+        self.utxo.extend(input_transactions_now_unspent)
+
+        # Remove the transactions in the UTxO that were removed from the blockchain.
+        self.utxo = [tx for tx in self.utxo if tx.get_txid() not in removed_txids]
+
+        # coins_to_add are the input-transactions of transactions in the removed blocks
+        # (as long as the input transaction is in the blockchain, and not in the removed blocks)
+        # and the output of this input transaction is the current node.
+        # This means coins that the node used but now since the blockchain is changing, he can use them again.
+        coins_to_add: List[TxID] = [tx.get_txid() for tx in input_transactions_now_unspent
+                                    if tx.output == self.public_key]
+
+        self.coins.extend(coins_to_add)
+        self.unspent_coins.extend(coins_to_add)
+
+        # Remove the coins that were granted to this node in transactions that were removed from the blockchain.
+        self.coins = [coin for coin in self.coins if coin not in removed_txids]
+        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in removed_txids]
+
+    def remove_existing_chain(self, common_ancestor: BlockHash) -> List[Block]:
         """
         Remove the existing chain in the blockchain, starting from the next block after the given common_ancestor
         (i.e. starting from the block that its previous block hash is common_ancestor).
@@ -430,7 +471,13 @@ class Node:
         assert (common_ancestor == GENESIS_BLOCK_PREV) or (common_ancestor in self.block_hash_to_index), \
             "The previous block of the first block in the new chain must exist in the current node's chain."
 
-        removed_transactions: Deque[Transaction] = deque()
+        removed_chain: List[Block] = list()
+        # Manage the removed transactions in a Deque because we want it to be ordered
+        # with the order of the blocks in the removed chain (first the transaction of the earliest
+        # block, then the transaction of the block after it, etc).
+        # We go over the removed blocks from the end to the beginning, so we want to extend from the left
+        # and it's more efficient in Deque than a regular list.
+        # removed_transactions: Deque[Transaction] = deque()
         curr_hash: BlockHash = self.get_latest_hash()
 
         while curr_hash != common_ancestor:
@@ -439,49 +486,33 @@ class Node:
                 "Otherwise the block_hash_to_index will be wrong."  # TODO remove
 
             block: Block = self.get_block(curr_hash)
-            transactions: List[Transaction] = block.get_transactions()
-            removed_transactions.extendleft(transactions)
+            removed_chain.append(block)
+            # transactions: List[Transaction] = block.get_transactions()
+            # removed_transactions.extendleft(transactions)
 
             # Remove the block from the blockchain (and from the dictionary mapping block-hash to index in blockchain).
             self.blockchain.pop()
             self.block_hash_to_index.pop(curr_hash)
 
+            for tx in block.get_transactions():
+                self.txid_to_blockhash.pop(tx.get_txid())
+
             curr_hash = block.get_prev_block_hash()
 
-        removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+        removed_chain.reverse()
 
-        for txid in removed_txids:
-            assert txid in self.txid_to_blockhash, \
-                "A transaction that was removed from the blockchain does not exists in txid_to_blockhash."
-            self.txid_to_blockhash.pop(txid)
+        # # We finished building the removed transactions, we can now cast it to a regular list type.
+        # removed_transactions: List[Transaction] = list(removed_transactions)
+        # removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
+        #
+        # for txid in removed_txids:
+        #     assert txid in self.txid_to_blockhash, \
+        #         "A transaction that was removed from the blockchain does not exists in txid_to_blockhash."
+        #     self.txid_to_blockhash.pop(txid)
 
-        # Keep only the removed transactions with input in the blockchain (and not in the removed blocks).
-        # These transactions' inputs should be added to the UTxO, since they now are un-spent.
-        removed_transactions_with_input_in_blockchain: List[Transaction] = [tx for tx in removed_transactions
-                                                                            if tx.input not in removed_txids
-                                                                            and tx.input is not None]
+        self.update_utxo_and_coins(removed_chain)
 
-        # Extend the UTxO with the input TxID of transactions that were removed from the blockchain
-        # and that the input-transaction was not in this removed transactions list.
-        # Now these transactions are un-spent.
-        self.utxo.extend([self.get_transaction(tx.input) for tx in removed_transactions_with_input_in_blockchain])
-
-        # Remove the transactions in the UTxO that were removed from the blockchain.
-        self.utxo = [tx for tx in self.utxo if tx.get_txid() not in removed_txids]
-
-        # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this node.
-        # coins_to_remove are the coins in the new blocks in the blockchain that this node used.
-        coins_to_add: List[TxID] = list()
-        for tx in removed_transactions_with_input_in_blockchain:
-            input_txid: TxID = tx.input
-            input_tx: Transaction = self.get_transaction(input_txid)
-            if input_tx.output == self.public_key:
-                coins_to_add.append(input_txid)
-
-        self.coins.extend(coins_to_add)
-        self.unspent_coins.extend(coins_to_add)
-
-        return list(removed_transactions)
+        return removed_chain
 
     def append_new_chain(self, new_chain: List[Block], removed_transactions: List[Transaction]) -> List[Transaction]:
         """
@@ -507,22 +538,18 @@ class Node:
             removed_transactions: List[Transaction] = [tx for tx in removed_transactions if tx not in transactions]
             self.add_to_blockchain(block)
 
-        self.update_coins(new_chain)
-
         return removed_transactions
 
-    def update_coins(self, new_chain: List[Block]) -> None:
+    def update_coins(self, block: Block) -> None:
         """
-        This function updates the balance allocated to this wallet by querying the bank.
-        Don't read all of the bank's utxo, but rather process the blocks since the last update one at a time.
-        For this exercise, there is no need to validate all transactions in the block
+        This function updates the balance allocated to this node according to a new block.
 
-        :param new_chain: The new chain that will replace the existing one.
+        :param block: The new block that was added to the blockchain.
         """
         # TODO test this function when given a chain of blocks that some coins are aassigned to me
         # TODO but I spent them later in the chain.
 
-        transactions: List[Transaction] = [tx for block in new_chain for tx in block.get_transactions()]
+        transactions: List[Transaction] = block.get_transactions()
 
         # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
         # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
@@ -544,7 +571,8 @@ class Node:
         This causes reorganization of the MemPool and the UTxO set.
         :param new_chain: The new chain that will replace the existing one.
         """
-        removed_transactions: List[Transaction] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
+        removed_chain: List[Block] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
+        removed_transactions = [tx for block in removed_chain for tx in block.get_transactions()]
         removed_transactions: List[Transaction] = self.append_new_chain(new_chain, removed_transactions)
 
         # Now try to add the transactions to the MemPool.
@@ -608,10 +636,26 @@ class Node:
         The mempool is similarly emptied of transactions that cannot be executed now.
         """
         new_chain: List[Block] = self.build_alternative_chain(block_hash, sender)
-        new_chain: List[Block] = self.truncate_invalid_blocks(new_chain)
 
         # TODO should we notify of a block that was already in our blockchain?
         # TODO i.e. the original given block_hash is already in the blockchain.
+        # If the new chain is empty it means that the given block-hash was already in our blockchain,
+        # and therefore no need to update anything.
+        if len(new_chain) == 0:
+            return
+
+        # Remove the existing chain, in order to reorganize the UTxO (TODO what about the coins?).
+        # This is needed in order to verify that each of the transaction in the new blocks use an un-spent input.
+        removed_chain: List[Block] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
+        removed_transactions: List[Transaction] = [tx for block in removed_chain for tx in block.get_transactions()]
+
+        # Now validate the new chain of blocks, and truncate it if some are not valid.
+        new_chain: List[Block] = self.truncate_invalid_blocks(new_chain)
+
+        # A sanity-check - all the removed transactions are now restored to the blockchain.
+        removed_transactions: List[Transaction] = self.append_new_chain(removed_chain, removed_transactions)
+        assert len(removed_transactions) == 0, "All removed transactions should have been back in the blockchain."
+
         if len(new_chain) == 0:
             return
 
@@ -647,14 +691,13 @@ class Node:
         self.txid_to_blockhash.update({tx.get_txid(): block_hash for tx in transactions})
 
         # Add the new transactions to the UTxO.
-        # Note the not all the transactions in transactions_to_add are un-spent,
-        # but this will be fixed in the next for-loop.
         self.utxo.extend(transactions)
 
-        # TODO is it really possible? If not, delete this code...
-        # Remove the transactions in the UTxO that were spent in any of the transaction in the transactions that
-        # were added to the blockchain.
+        # Remove the transactions in the UTxO that were spent in any of the transaction
+        # in the transactions that were added to the blockchain.
         self.utxo = [tx for tx in self.utxo if tx.get_txid() not in [tx.input for tx in transactions]]
+
+        self.update_coins(block)
 
         return block_hash
 
@@ -682,8 +725,6 @@ class Node:
         # Generate a new block and append it to the blockchain.
         block: Block = Block(previous_block_hash=self.get_latest_hash(), transactions=transactions_to_add)
         block_hash: BlockHash = self.add_to_blockchain(block)
-
-        self.update_coins([block])
 
         self.notify_latest_block_to_all_connections()
 
