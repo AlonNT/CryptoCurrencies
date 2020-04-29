@@ -1,5 +1,5 @@
 import sys
-from typing import List, Optional, NewType, Set, Dict, Deque
+from typing import List, Optional, NewType, Set, Dict, Deque, Tuple
 import ecdsa  # type: ignore
 import hashlib
 import secrets
@@ -51,7 +51,7 @@ def get_transactions_hash(transactions: List['Transaction']) -> bytes:
     while len(curr_queue) >= 2:
         # The amount of times the for-loop will execute is n // 2, and if
         # n is odd then the last transaction is repeated to form a "pair" of transactions.
-        n = len(curr_queue)
+        n: int = len(curr_queue)
         for i in range(0, n, 2):
             left_txid: bytes = curr_queue.popleft()
             right_txid: bytes = curr_queue.popleft() if i + 1 < n else left_txid
@@ -99,7 +99,6 @@ class Transaction:
         tx_content: bytes = self.output + input_bytes + self.signature
         return TxID(hash_function(tx_content))
 
-    # TODO Define the UTxO as a set (cast it to list when returning it in get_utxo to comply with the API).
     def __hash__(self):
         """
         This function is implemented to enable storing the Transaction object in hashable containers (such as a set).
@@ -137,7 +136,7 @@ class Block:
         """
         # This is done to avoid using mutable values as a default argument (i.e. transactions=list()).
         if transactions is None:
-            transactions = list()
+            transactions: List[Transaction] = list()
 
         self.previous_block_hash: BlockHash = previous_block_hash
         self.transactions: List[Transaction] = transactions
@@ -175,7 +174,6 @@ class Node:
 
         # This is the list of unspent transactions (to validate that new transactions
         # that are entering the MemPool use an unspent input).
-        # TODO implement as a set (cast it to list when returning it in get_utxo to comply with the API).
         self.utxo: List[Transaction] = list()
 
         # This is used in order to get the block given the BlockHash in O(1),
@@ -190,7 +188,7 @@ class Node:
         self.public_key: PublicKey = PublicKey(self.private_key.get_verifying_key().to_der())
 
         # These are the TxIDs of the transactions in the blockchain that their output is this Node's public_key.
-        self.coins: List[TxID] = list()  # TODO handle this... same as 'update' in ex1
+        self.coins: List[TxID] = list()
 
         # These are the TxIDs of the transactions in the blockchain that their output is this Node's public_key.
         # BUT - this Node didn't use them already in creating new transactions
@@ -200,8 +198,6 @@ class Node:
         # This is the list of all the connections this Node has.
         self.connections: Set[Node] = set()
 
-    # TODO implement UTxO as a set and remove this function
-    # (cast the UTxO to list when returning it in get_utxo to comply with the API).
     def get_tx_index_in_utxo(self, transaction: Transaction) -> int:
         """
         Get the index of the transaction in the UTxO that its TxID matches the TxID of the given transaction.
@@ -267,13 +263,7 @@ class Node:
         :param transaction: The transaction to notify about.
         """
         for node in self.connections:
-            node.add_transaction_to_mempool(transaction)  # TODO whould we do something if it fails?
-            # addition_to_mempool_was_successful = node.add_transaction_to_mempool(transaction)
-            # TODO what should happen in the transaction is already in the other node's MemPool?
-            # TODO Should False be returned or True?
-            # if not addition_to_mempool_was_successful:
-            #     stop = 'here'
-            # assert addition_to_mempool_was_successful, "Addition to the connected node MemPool failed."  # TODO remove
+            node.add_transaction_to_mempool(transaction)
 
     def verify_transaction_validity(self, transaction: Transaction) -> bool:
         """
@@ -308,7 +298,7 @@ class Node:
 
         return True
 
-    def add_transaction_to_mempool(self, transaction: Transaction) -> bool:
+    def add_transaction_to_mempool(self, transaction: Transaction, notify_connections: bool = True) -> bool:
         """
         This function inserts the given transaction to the mempool.
         It is used by a Node's connections to inform it of a new transaction.
@@ -318,13 +308,19 @@ class Node:
         (iii) There is contradicting tx in the mempool.
 
         :param transaction: The transaction to add to the MemPool.
+        :param notify_connections: Should we notify the connections regarding this new transaction.
+                                   Will be False when the transaction being added is due to ReOrg
+                                   (i.e. transactions in the removed chain that are still valid and
+                                   can enter the blockchain).
         :return: True if it was added, False otherwise (because it was invalid).
         """
         transaction_is_valid: bool = self.verify_transaction_validity(transaction)
 
         if transaction_is_valid:
             self.mempool.append(transaction)
-            self.notify_transaction_to_all_connections(transaction)
+
+            if notify_connections:
+                self.notify_transaction_to_all_connections(transaction)
 
         return transaction_is_valid
 
@@ -340,15 +336,11 @@ class Node:
         """
         new_chain: List[Block] = list()
 
-        # Maintain a set of all block hashes, to avoid a circle (which will cause an infinite loop).
-        # See https://moodle2.cs.huji.ac.il/nu19/mod/forum/discuss.php?d=64212#p92505
-        already_seen_block_hashes_set: Set[BlockHash] = set()  # TODO implement the rabbit and the turtle
+        # Maintain a set of all block hashes, to avoid a circle (which will cause an infinite loop). TODO remove?
+        already_seen_block_hashes_set: Set[BlockHash] = set()
 
-        # TODO test a chain which does not begin with the GENESIS block
-        # TODO test a chain which goes all the way to the GENESIS block
-        # TODO how to verify that the new chain start from the genesis block?
         while (block_hash not in self.block_hash_to_index) and (block_hash != GENESIS_BLOCK_PREV):
-            # If the block_hash was already seen this means there is a circle in the new blockchain.
+            # If the block_hash was already seen this means there is a circle in the new blockchain. TODO remove?
             if block_hash in already_seen_block_hashes_set:
                 return list()
 
@@ -358,7 +350,6 @@ class Node:
                 return list()
 
             # It is possible that a "bad" node will return a block with a different hash than requested.
-            # See https://moodle2.cs.huji.ac.il/nu19/mod/forum/discuss.php?d=63881#p92491
             if block.get_block_hash() != block_hash:
                 return list()
 
@@ -370,29 +361,6 @@ class Node:
         # We reverse at the end and not insert to the left, because appending to the right of a list is O(1)
         # while inserting to the left is O(n).
         new_chain.reverse()
-
-        return new_chain
-
-    def truncate_invalid_blocks(self, new_chain: List[Block]) -> List[Block]:
-        """
-        Verify the validity of the blocks in the new chain, and truncate it if some block turned out to be invalid.
-        Note that some blocks might remain in the chain. TODO test it
-        :param new_chain: The new chain to verify and truncate if needed.
-        :return: The (possibly) truncated list of blocks. If the whole chain is malformed, an empty list is returned.
-        """
-        for i, block in enumerate(new_chain):
-            # TODO Do we need to verify money-creation transactions (e.g. verify_transaction_validity):
-            # TODO verify the block-hash?
-            transactions: List[Transaction] = block.get_transactions()
-            amount_of_money_creation_is_valid: bool = (1 == sum(tx.input is None for tx in transactions))
-            transactions_are_valid: bool = all(self.verify_transaction_validity(tx) for tx in transactions
-                                               if tx.input is not None and tx not in self.mempool)  # TODO is it okay? (and tx not in self.mempool)
-            block_size_is_valid: bool = (len(transactions) <= BLOCK_SIZE)
-
-            # If this block is not valid, discard it and the rest of the chain.
-            if not (amount_of_money_creation_is_valid and transactions_are_valid and block_size_is_valid):
-                new_chain: List[Block] = new_chain[:i]
-                break
 
         return new_chain
 
@@ -416,16 +384,17 @@ class Node:
 
         assert False, "The transaction was not found in the blockchain."
 
-    def update_utxo_and_coins(self, removed_chain: List[Block]):
+    def get_relevant_transactions_from_removed_chain(self, removed_chain: List[Block]) -> Tuple[List[TxID],
+                                                                                                List[Transaction]]:
         """
-        Update the UTxO and the coins assigned to this node, according to the removed transactions.
-        Some transactions are now un-spent (because we removed a transaction that used
-        some input transaction, so the input transaction is now un-spent).
-        Some transactions were un-spent and now does not exists so they need to be removed.
+        Get the relevant transactions from the removed chain, which are the input-transactions of transactions
+        in the removed chain, that exists in the original blockchain (and not in the removed chain).
+        It also returns the TxIDs of all of the removed transactions in the given removed chain (no exceptions).
 
-        :param removed_chain: The list of all transactions that were removed from the blockchain.
+        :param removed_chain: The removed chain of blocks.
+        :return: removed_txids and input_transactions_now_unspent
         """
-        removed_transactions = [tx for block in removed_chain for tx in block.get_transactions()]
+        removed_transactions: List[Transaction] = [tx for block in removed_chain for tx in block.get_transactions()]
         removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
 
         # Keep only the removed transactions with input in the blockchain (and not in the removed blocks).
@@ -436,13 +405,38 @@ class Node:
         # Input transactions the are now unspent, because they were used in transactions in the removed blocks.
         input_transactions_now_unspent: List[Transaction] = [self.get_transaction(tx.input)
                                                              for tx in removed_transactions_with_input_in_blockchain]
+
+        return removed_txids, input_transactions_now_unspent
+
+    def update_utxo(self, removed_chain: List[Block]):
+        """
+        Update the UTxO, according to the removed transactions.
+        Some transactions are now un-spent (because we removed a transaction that used
+        some input transaction, so the input transaction is now un-spent).
+        Some transactions were un-spent and now does not exists so they need to be removed.
+
+        :param removed_chain: The list of all transactions that were removed from the blockchain.
+        """
+        removed_txids, input_transactions_now_unspent = self.get_relevant_transactions_from_removed_chain(removed_chain)
+
         # Extend the UTxO with the input TxID of transactions that were removed from the blockchain
         # and that the input-transaction was not in this removed transactions list.
         # Now these transactions are un-spent.
         self.utxo.extend(input_transactions_now_unspent)
 
         # Remove the transactions in the UTxO that were removed from the blockchain.
-        self.utxo = [tx for tx in self.utxo if tx.get_txid() not in removed_txids]
+        self.utxo: List[Transaction] = [tx for tx in self.utxo if tx.get_txid() not in removed_txids]
+
+    def update_coins_according_to_removed_chain(self, removed_chain: List[Block]):
+        """
+        Update the UTxO and the coins assigned to this node, according to the removed transactions.
+        Some transactions are now un-spent (because we removed a transaction that used
+        some input transaction, so the input transaction is now un-spent).
+        Some transactions were un-spent and now does not exists so they need to be removed.
+
+        :param removed_chain: The list of all transactions that were removed from the blockchain.
+        """
+        removed_txids, input_transactions_now_unspent = self.get_relevant_transactions_from_removed_chain(removed_chain)
 
         # coins_to_add are the input-transactions of transactions in the removed blocks
         # (as long as the input transaction is in the blockchain, and not in the removed blocks)
@@ -455,13 +449,14 @@ class Node:
         self.unspent_coins.extend(coins_to_add)
 
         # Remove the coins that were granted to this node in transactions that were removed from the blockchain.
-        self.coins = [coin for coin in self.coins if coin not in removed_txids]
-        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in removed_txids]
+        self.coins: List[TxID] = [coin for coin in self.coins if coin not in removed_txids]
+        self.unspent_coins: List[TxID] = [coin for coin in self.unspent_coins if coin not in removed_txids]
 
     def remove_existing_chain(self, common_ancestor: BlockHash) -> List[Block]:
         """
         Remove the existing chain in the blockchain, starting from the next block after the given common_ancestor
         (i.e. starting from the block that its previous block hash is common_ancestor).
+
         :param common_ancestor: The block hash that will be the last block in the new blockchain.
         :return: A list of transactions that were removed from the blockchain (will be added to the MemPool later).
         """
@@ -469,51 +464,35 @@ class Node:
             "The previous block of the first block in the new chain must exist in the current node's chain."
 
         removed_chain: List[Block] = list()
-        # Manage the removed transactions in a Deque because we want it to be ordered
-        # with the order of the blocks in the removed chain (first the transaction of the earliest
-        # block, then the transaction of the block after it, etc).
-        # We go over the removed blocks from the end to the beginning, so we want to extend from the left
-        # and it's more efficient in Deque than a regular list.
-        # removed_transactions: Deque[Transaction] = deque()
         curr_hash: BlockHash = self.get_latest_hash()
 
         while curr_hash != common_ancestor:
             assert self.block_hash_to_index[curr_hash] == len(self.blockchain) - 1, \
                 "We are removing blocks from the end of the blockchain. " \
-                "Otherwise the block_hash_to_index will be wrong."  # TODO remove
+                "Otherwise the block_hash_to_index will be wrong."
 
             block: Block = self.get_block(curr_hash)
             removed_chain.append(block)
-            # transactions: List[Transaction] = block.get_transactions()
-            # removed_transactions.extendleft(transactions)
 
-            # Remove the block from the blockchain (and from the dictionary mapping block-hash to index in blockchain).
             self.blockchain.pop()
-            self.block_hash_to_index.pop(curr_hash)
 
+            self.block_hash_to_index.pop(curr_hash)
             for tx in block.get_transactions():
                 self.txid_to_blockhash.pop(tx.get_txid())
 
-            curr_hash = block.get_prev_block_hash()
+            curr_hash: BlockHash = block.get_prev_block_hash()
 
         removed_chain.reverse()
 
-        # # We finished building the removed transactions, we can now cast it to a regular list type.
-        # removed_transactions: List[Transaction] = list(removed_transactions)
-        # removed_txids: List[TxID] = [tx.get_txid() for tx in removed_transactions]
-        #
-        # for txid in removed_txids:
-        #     assert txid in self.txid_to_blockhash, \
-        #         "A transaction that was removed from the blockchain does not exists in txid_to_blockhash."
-        #     self.txid_to_blockhash.pop(txid)
-
-        self.update_utxo_and_coins(removed_chain)
+        self.update_utxo(removed_chain)
 
         return removed_chain
 
     def append_new_chain(self, new_chain: List[Block], removed_transactions: List[Transaction]) -> List[Transaction]:
         """
         Append new chain to the end of the blockchain.
+        This will also verify the validity of the blocks in the new chain,
+        and truncate it if some block turned out to be invalid.
         This will also remove the transactions in the MemPool that are now in the blockchain.
         This will also handle the UTxO set properly.
         :param new_chain: The new chain to add to the blockchain.
@@ -523,12 +502,33 @@ class Node:
         """
         for block in new_chain:
             assert block.get_block_hash() not in self.block_hash_to_index, \
-                "new_chain has blocks already in the current blockchain"
+                "block is already in the blockchain"
 
             transactions: List[Transaction] = block.get_transactions()
 
+            # First of all, verify the "easy" stuff:
+            # (*) The number of money-creation transactions is exactly 1.
+            # (*) The total number of transactions is at most BLOCK_SIZE.
+            amount_of_money_creation_is_valid: bool = (1 == sum(tx.input is None for tx in transactions))
+            block_size_is_valid: bool = (len(transactions) <= BLOCK_SIZE)
+
+            # Verify that all transactions are valid:
+            # (*) The input transaction in the in UTxO.
+            # (*) The signature is valid, i.e. was signed using the private key of the sender on the output + input.
+            # (*) There is no contradicting transaction in the MemPool.
+            # We exclude:
+            # (*) Transactions that are money-creation (i.e. input is None).
+            # (*) Transaction that already exist in our MemPool (it was verified when entering the MemPool,
+            #     and the general validity check will fail because there is a contradicting transaction in the MemPool.
+            transactions_are_valid: bool = all(self.verify_transaction_validity(tx) for tx in transactions
+                                               if tx.input is not None and tx not in self.mempool)
+
+            # If this block is not valid, discard it and the rest of the chain.
+            if not (amount_of_money_creation_is_valid and transactions_are_valid and block_size_is_valid):
+                break
+
             # Remove all the transactions in the MemPool that are in the current block we are adding to the blockchain.
-            self.mempool = [tx for tx in self.mempool if tx not in transactions]
+            self.mempool: List[Transaction] = [tx for tx in self.mempool if tx not in transactions]
 
             # Remove all the transactions in the removed_transactions list that are in the current block,
             # because they don't need to enter the MemPool later.
@@ -537,21 +537,18 @@ class Node:
 
         return removed_transactions
 
-    def update_coins(self, block: Block) -> None:
+    def update_coins_according_to_new_chain(self, new_chain: List[Block]) -> None:
         """
         This function updates the balance allocated to this node according to a new block.
 
-        :param block: The new block that was added to the blockchain.
+        :param new_chain: The new chain of blocks that was added to the blockchain.
         """
-        # TODO test this function when given a chain of blocks that some coins are aassigned to me
-        # TODO but I spent them later in the chain.
-
-        transactions: List[Transaction] = block.get_transactions()
+        transactions: List[Transaction] = [tx for block in new_chain for tx in block.get_transactions()]
 
         # coins_to_add are the coins in the new blocks in the blockchain that are assigned to this wallet.
         # coins_to_remove are the coins in the new blocks in the blockchain that this wallet used.
         coins_to_add: List[TxID] = [tx.get_txid() for tx in transactions if tx.output == self.public_key]
-        coins_to_remove: List[TxID] = [tx.input for tx in transactions if tx.input in self.coins]
+        coins_to_remove: List[TxID] = [tx.input for tx in transactions]
 
         # Add the coins that were sent to this address, found in transactions in the blockchain
         # (in the relevant part of the blockchain, meaning from the last time we updated).
@@ -559,26 +556,8 @@ class Node:
         self.unspent_coins.extend(coins_to_add)
 
         # Remove the coins that were spent in transactions that made it into the blockchain.
-        self.coins = [coin for coin in self.coins if coin not in coins_to_remove]
-        self.unspent_coins = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
-
-    def reorg(self, new_chain: List[Block]) -> None:
-        """
-        Replace between the current blockchain and the new one.
-        This causes reorganization of the MemPool and the UTxO set.
-        :param new_chain: The new chain that will replace the existing one.
-        """
-        removed_chain: List[Block] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
-        removed_transactions = [tx for block in removed_chain for tx in block.get_transactions()]
-        removed_transactions: List[Transaction] = self.append_new_chain(new_chain, removed_transactions)
-
-        # Now try to add the transactions to the MemPool.
-        transactions: List[Transaction] = self.mempool + removed_transactions
-        self.clear_mempool()
-
-        # Now try to add the transactions to the MemPool.
-        for transaction in transactions:
-            self.add_transaction_to_mempool(transaction)
+        self.coins: List[TxID] = [coin for coin in self.coins if coin not in coins_to_remove]
+        self.unspent_coins: List[TxID] = [coin for coin in self.unspent_coins if coin not in coins_to_remove]
 
     def get_length_of_tail(self, block_hash: BlockHash) -> int:
         """
@@ -595,7 +574,7 @@ class Node:
 
         while curr_hash != block_hash:
             length_of_current_chain += 1
-            curr_hash = self.get_block(curr_hash).get_prev_block_hash()
+            curr_hash: BlockHash = self.get_block(curr_hash).get_prev_block_hash()
 
         return length_of_current_chain
 
@@ -605,8 +584,8 @@ class Node:
         :param new_chain: The new chain to find the common ancestor.
         :return: the block-hash of the common ancestor.
         """
-        assert len(new_chain) > 0, "Can not get the common ancestor of the blockchain and an empty new_chain." \
-                                   ""
+        assert len(new_chain) > 0, "Can not get the common ancestor of the blockchain and an empty new_chain."
+
         common_ancestor: BlockHash = new_chain[0].get_prev_block_hash()
 
         assert (common_ancestor == GENESIS_BLOCK_PREV) or (common_ancestor in self.block_hash_to_index), \
@@ -634,33 +613,50 @@ class Node:
         """
         new_chain: List[Block] = self.build_alternative_chain(block_hash, sender)
 
-        # TODO should we notify of a block that was already in our blockchain?
-        # TODO i.e. the original given block_hash is already in the blockchain.
+        # TODO should we notify of a block that was already in our blockchain? i.e. the original given block_hash is already in the blockchain.
         # If the new chain is empty it means that the given block-hash was already in our blockchain,
         # and therefore no need to update anything.
         if len(new_chain) == 0:
             return
 
-        # Remove the existing chain, in order to reorganize the UTxO (TODO what about the coins?).
-        # This is needed in order to verify that each of the transaction in the new blocks use an un-spent input.
-        removed_chain: List[Block] = self.remove_existing_chain(self.get_common_ancestor(new_chain))
-        removed_transactions: List[Transaction] = [tx for block in removed_chain for tx in block.get_transactions()]
+        common_ancestor_hash: BlockHash = self.get_common_ancestor(new_chain)
+        length_of_current_chain_tail: int = self.get_length_of_tail(common_ancestor_hash)
 
-        # Now validate the new chain of blocks, and truncate it if some are not valid.
-        new_chain: List[Block] = self.truncate_invalid_blocks(new_chain)
+        # Remove the existing chain, in order to reorganize the UTxO.
+        # This is needed in order to verify that each of the transactions in the new blocks uses an un-spent input.
+        removed_orig_chain: List[Block] = self.remove_existing_chain(common_ancestor_hash)
+        removed_orig_transactions: List[Transaction] = [tx for block in removed_orig_chain
+                                                        for tx in block.get_transactions()]
+        removed_orig_transactions_not_in_new_chain: List[Transaction] = self.append_new_chain(new_chain,
+                                                                                              removed_orig_transactions)
 
-        # A sanity-check - all the removed transactions are now restored to the blockchain.
-        removed_transactions: List[Transaction] = self.append_new_chain(removed_chain, removed_transactions)
-        assert len(removed_transactions) == 0, "All removed transactions should have been back in the blockchain."
+        length_of_alternative_chain_tail: int = self.get_length_of_tail(common_ancestor_hash)
 
-        if len(new_chain) == 0:
-            return
+        if length_of_current_chain_tail >= length_of_alternative_chain_tail:
+            # The alternative chain is not longer than the original one, so revert the changes.
+            self.remove_existing_chain(common_ancestor_hash)
+            removed_orig_transactions: List[Transaction] = self.append_new_chain(removed_orig_chain,
+                                                                                 removed_orig_transactions)
 
-        length_of_current_chain: int = self.get_length_of_tail(self.get_common_ancestor(new_chain))
+            assert len(removed_orig_transactions) == 0, "All removed transactions should be back in the blockchain."
 
-        if len(new_chain) > length_of_current_chain:
-            self.reorg(new_chain)
+        else:
+            # The alternative chain is longer than the original one, notify connections
+            # about the new tip of the blockchain, and update the coins and the MemPool.
             self.notify_latest_block_to_all_connections()
+
+            # Update the coins assigned to this node, both according to the removed chain of blocks,
+            # and according the the new chain of blocks (only the block that actually entered the blockchain,
+            # since some might have been discarded due to invalidity).
+            self.update_coins_according_to_removed_chain(removed_orig_chain)
+            self.update_coins_according_to_new_chain([block for block in new_chain
+                                                      if block.get_block_hash() in self.block_hash_to_index])
+
+            # Now try to add the transactions to the MemPool (no need to notify the connections).
+            transactions: List[Transaction] = self.mempool + removed_orig_transactions_not_in_new_chain
+            self.clear_mempool()
+            for transaction in transactions:
+                self.add_transaction_to_mempool(transaction, notify_connections=False)
 
     def get_money_creation_transaction(self) -> Transaction:
         """
@@ -676,6 +672,10 @@ class Node:
         Append a new block to the blockchain, and handle the UTxO set accordingly.
 
         :param block: The block to append.
+        :param update_coins: Should we update the coins of this node according the the block.
+                                   Will be False when the block is being added is due to ReOrg
+                                   (i.e. transactions in the removed chain that are still valid and
+                                   can enter the blockchain).
         :return: The block-hash of the block that was added to the blockchain.
         """
         block_hash: BlockHash = block.get_block_hash()
@@ -692,9 +692,8 @@ class Node:
 
         # Remove the transactions in the UTxO that were spent in any of the transaction
         # in the transactions that were added to the blockchain.
-        self.utxo = [tx for tx in self.utxo if tx.get_txid() not in [tx.input for tx in transactions]]
-
-        self.update_coins(block)
+        self.utxo: List[Transaction] = [tx for tx in self.utxo
+                                        if tx.get_txid() not in [tx.input for tx in transactions]]
 
         return block_hash
 
@@ -714,7 +713,7 @@ class Node:
         transactions_to_add: List[Transaction] = self.mempool[:BLOCK_SIZE-1]
 
         # Remove the transactions from the MemPool.
-        self.mempool = self.mempool[BLOCK_SIZE-1:]
+        self.mempool: List[Transaction] = self.mempool[BLOCK_SIZE-1:]
 
         # Add the money-creation transaction to the the block.
         transactions_to_add.append(self.get_money_creation_transaction())
@@ -725,6 +724,8 @@ class Node:
 
         self.notify_latest_block_to_all_connections()
 
+        self.update_coins_according_to_new_chain([block])
+
         return block_hash
 
     def get_block(self, block_hash: BlockHash) -> Block:
@@ -733,7 +734,7 @@ class Node:
         :return: A block object given its hash.
                  If the block doesnt exist, a ValueError is raised.
         """
-        index_in_blockchain = self.block_hash_to_index.get(block_hash)
+        index_in_blockchain: int = self.block_hash_to_index.get(block_hash)
 
         if index_in_blockchain is not None:
             return self.blockchain[index_in_blockchain]
@@ -782,9 +783,9 @@ class Node:
                                                tx_input=selected_coin,
                                                signature=self.private_key.sign(target + selected_coin))
 
-        addition_to_mempool_was_successful = self.add_transaction_to_mempool(transaction)
+        addition_to_mempool_was_successful: bool = self.add_transaction_to_mempool(transaction)
 
-        assert addition_to_mempool_was_successful, "Addition to the MemPool failed. WTF?"  # TODO remove
+        assert addition_to_mempool_was_successful, "Addition to the MemPool failed. WTF?"
 
         return transaction
 
@@ -793,7 +794,7 @@ class Node:
         Clears this nodes mempool. All transactions waiting to be entered into the next block are cleared.
         """
         self.mempool.clear()
-        self.unspent_coins = self.coins[:]
+        self.unspent_coins: List[TxID] = self.coins[:]
 
     def get_balance(self) -> int:
         """

@@ -318,6 +318,132 @@ def test_bob_serves_wrong_block(alice: Node, bob: Node, charlie: Node, monkeypat
     assert alice.get_utxo() == []
 
 
+def test_alternative_chain_tx_double_spend_tx_in_the_removed_chain(alice: Node, bob: Node, charlie: Node) -> None:
+    alice.connect(bob)
+    bob.connect(charlie)
+
+    block1_hash = alice.mine_block()
+    tx1 = alice.create_transaction(bob.get_address())
+    assert alice.get_mempool() == bob.get_mempool() == charlie.get_mempool() == [tx1]
+
+    alice.clear_mempool()
+    alice.disconnect_from(bob)
+
+    assert alice.get_balance() == 1
+    assert bob.get_balance() == 0
+    assert charlie.get_balance() == 0
+    assert len(alice.get_mempool()) == 0
+    assert bob.get_mempool() == charlie.get_mempool() == [tx1]
+    assert set(alice.get_utxo()) == set(bob.get_utxo()) == set(charlie.get_utxo())
+    assert alice.get_latest_hash() == bob.get_latest_hash() == charlie.get_latest_hash() == block1_hash
+    assert (alice.get_block(block1_hash).get_prev_block_hash() ==
+            bob.get_block(block1_hash).get_prev_block_hash() ==
+            charlie.get_block(block1_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+    tx2 = alice.create_transaction(charlie.get_address())
+    block2_hash = alice.mine_block()
+
+    assert alice.get_balance() == 1
+    assert bob.get_balance() == 0
+    assert charlie.get_balance() == 0
+    assert tx2 in alice.get_utxo() and len(alice.get_utxo()) == 2
+    assert len(alice.get_mempool()) == 0
+    assert bob.get_mempool() == charlie.get_mempool() == [tx1]
+    assert set(bob.get_utxo()) == set(charlie.get_utxo())
+    assert alice.get_latest_hash() == block2_hash
+    assert alice.get_block(block2_hash).get_prev_block_hash() == block1_hash
+    assert bob.get_latest_hash() == charlie.get_latest_hash() == block1_hash
+    assert (alice.get_block(block1_hash).get_prev_block_hash() ==
+            bob.get_block(block1_hash).get_prev_block_hash() ==
+            charlie.get_block(block1_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+    block3_hash = charlie.mine_block()
+    block4_hash = charlie.mine_block()
+
+    assert alice.get_balance() == 1  # alice is not aware of the update yet
+    assert bob.get_balance() == 1
+    assert charlie.get_balance() == 2
+    assert tx2 in alice.get_utxo() and len(alice.get_utxo()) == 2
+    assert tx1 in bob.get_utxo() and len(bob.get_utxo()) == 3
+    assert len(alice.get_mempool()) == len(bob.get_mempool()) == len(charlie.get_mempool()) == 0
+    assert set(bob.get_utxo()) == set(charlie.get_utxo())
+    assert alice.get_latest_hash() == block2_hash
+    assert alice.get_block(block2_hash).get_prev_block_hash() == block1_hash
+    assert bob.get_latest_hash() == charlie.get_latest_hash() == block4_hash
+    assert (bob.get_block(block4_hash).get_prev_block_hash() ==
+            charlie.get_block(block4_hash).get_prev_block_hash() ==
+            block3_hash)
+    assert (bob.get_block(block3_hash).get_prev_block_hash() ==
+            charlie.get_block(block3_hash).get_prev_block_hash() ==
+            block1_hash)
+    assert (alice.get_block(block1_hash).get_prev_block_hash() ==
+            bob.get_block(block1_hash).get_prev_block_hash() ==
+            charlie.get_block(block1_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+    alice.connect(bob)
+
+    assert alice.get_balance() == 0  # alice is now aware of the update
+    assert bob.get_balance() == 1
+    assert charlie.get_balance() == 2
+    assert len(alice.get_mempool()) == len(bob.get_mempool()) == len(charlie.get_mempool()) == 0
+    assert tx1 in bob.get_utxo() and len(bob.get_utxo()) == 3
+    assert set(alice.get_utxo()) == set(bob.get_utxo()) == set(charlie.get_utxo())
+    assert alice.get_latest_hash() == bob.get_latest_hash() == charlie.get_latest_hash() == block4_hash
+    assert (alice.get_block(block4_hash).get_prev_block_hash() ==
+            bob.get_block(block4_hash).get_prev_block_hash() ==
+            charlie.get_block(block4_hash).get_prev_block_hash() ==
+            block3_hash)
+    assert (alice.get_block(block3_hash).get_prev_block_hash() ==
+            bob.get_block(block3_hash).get_prev_block_hash() ==
+            charlie.get_block(block3_hash).get_prev_block_hash() ==
+            block1_hash)
+    assert (alice.get_block(block1_hash).get_prev_block_hash() ==
+            bob.get_block(block1_hash).get_prev_block_hash() ==
+            charlie.get_block(block1_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+
+def test_alternative_chain_later_tx_use_earlier_tx_in_that_chain(alice: Node, bob: Node, charlie: Node) -> None:
+    bob.connect(charlie)
+    block1_hash = alice.mine_block()
+    block2_hash = bob.mine_block()
+    bob.create_transaction(charlie.get_address())
+    block3_hash = bob.mine_block()
+
+    assert alice.get_balance() == 1
+    assert bob.get_balance() == 1
+    assert charlie.get_balance() == 1
+    assert alice.get_latest_hash() == block1_hash
+    assert alice.get_block(block1_hash).get_prev_block_hash() == GENESIS_BLOCK_PREV
+    assert bob.get_latest_hash() == charlie.get_latest_hash() == block3_hash
+    assert (bob.get_block(block3_hash).get_prev_block_hash() ==
+            charlie.get_block(block3_hash).get_prev_block_hash() ==
+            block2_hash)
+    assert (bob.get_block(block2_hash).get_prev_block_hash() ==
+            charlie.get_block(block2_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+    charlie.connect(alice)
+
+    assert alice.get_balance() == 0
+    assert bob.get_balance() == 1
+    assert charlie.get_balance() == 1
+    assert alice.get_mempool() == bob.get_mempool() == charlie.get_mempool() == []
+    assert set(alice.get_utxo()) == set(bob.get_utxo()) == set(charlie.get_utxo())
+    assert alice.get_latest_hash() == bob.get_latest_hash() == charlie.get_latest_hash() == block3_hash
+    assert (alice.get_block(block3_hash).get_prev_block_hash() ==
+            bob.get_block(block3_hash).get_prev_block_hash() ==
+            charlie.get_block(block3_hash).get_prev_block_hash() ==
+            block2_hash)
+    assert (alice.get_block(block2_hash).get_prev_block_hash() ==
+            bob.get_block(block2_hash).get_prev_block_hash() ==
+            charlie.get_block(block2_hash).get_prev_block_hash() ==
+            GENESIS_BLOCK_PREV)
+
+
 def test_same_tx_in_both_chains(alice: Node, bob: Node, charlie: Node) -> None:
     alice.connect(bob)
     block1_hash = alice.mine_block()
@@ -383,8 +509,6 @@ def test_same_tx_in_both_chains(alice: Node, bob: Node, charlie: Node) -> None:
 
     assert alice.get_balance() == 0
     assert bob.get_balance() == 4
-    assert (tx2_1 in bob.get_mempool()) != (tx2_2 in bob.get_mempool()), \
-        "Exactly one of them should be in the MemPool, since we are restoring transactions that can still happen"
     assert (tx2_1 in alice.get_mempool()) != (tx2_2 in alice.get_mempool()), \
         "Exactly one of them should be in the MemPool, since we are restoring transactions that can still happen"
 
