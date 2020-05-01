@@ -377,7 +377,7 @@ class Node:
                  returns None if it is not in the blockchain (should no happen, there is even an assert).
         """
         block_hash: BlockHash = self.txid_to_blockhash[txid]
-        block: Block = self.get_block(block_hash)
+        block: Block = self.blockchain[self.block_hash_to_index[block_hash]]
         for tx in block.get_transactions():
             if tx.get_txid() == txid:
                 return tx
@@ -471,7 +471,7 @@ class Node:
                 "We are removing blocks from the end of the blockchain. " \
                 "Otherwise the block_hash_to_index will be wrong."
 
-            block: Block = self.get_block(curr_hash)
+            block: Block = self.blockchain[self.block_hash_to_index[curr_hash]]
             removed_chain.append(block)
 
             self.blockchain.pop()
@@ -574,7 +574,7 @@ class Node:
 
         while curr_hash != block_hash:
             length_of_current_chain += 1
-            curr_hash: BlockHash = self.get_block(curr_hash).get_prev_block_hash()
+            curr_hash: BlockHash = self.blockchain[self.block_hash_to_index[curr_hash]].get_prev_block_hash()
 
         return length_of_current_chain
 

@@ -517,3 +517,19 @@ def test_same_tx_in_both_chains(alice: Node, bob: Node, charlie: Node) -> None:
     assert alice.get_block(block6_hash)
     assert alice.get_balance() == 2
     assert bob.get_balance() == 3
+
+
+def test_should_not_replace_in_block_hash_not_correct(alice: Node, bob: Node, charlie: Node, monkeypatch: Any) -> None:
+    alice_hash = alice.mine_block()
+    h1 = bob.mine_block()
+    block1 = bob.get_block(h1)
+    h2 = bob.mine_block()
+    block2 = bob.get_block(h2)
+    h3 = bob.mine_block()
+    block3 = bob.get_block(h3)
+    blocks = {h1:block1, h2:Block(alice_hash, []), h3: block3}
+
+    monkeypatch.setattr(bob, "get_block", lambda block_hash: blocks[block_hash])
+
+    alice.connect(bob)
+    assert alice.get_latest_hash() == alice_hash
