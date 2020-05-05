@@ -533,3 +533,20 @@ def test_should_not_replace_in_block_hash_not_correct(alice: Node, bob: Node, ch
 
     alice.connect(bob)
     assert alice.get_latest_hash() == alice_hash
+
+
+def test_add_block_with_mempool_contradiction(alice: Node, bob: Node) -> None:
+    # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO
+    alice.connect(bob)
+    alice.mine_block()
+    txn = alice.create_transaction(bob.get_address())
+    alice.disconnect_from(bob)
+    alice.clear_mempool()
+    txn2 = alice.create_transaction(bob.get_address())
+    assert txn2 is not None
+    alice.mine_block()
+    assert alice.get_block(alice.get_latest_hash()).get_prev_block_hash() == bob.get_latest_hash()
+    assert txn in bob.get_mempool()
+    bob.notify_of_block(alice.get_latest_hash(), alice)
+    assert bob.get_latest_hash() == alice.get_latest_hash()
+    assert len(bob.get_mempool()) == 0

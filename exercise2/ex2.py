@@ -265,7 +265,7 @@ class Node:
         for node in self.connections:
             node.add_transaction_to_mempool(transaction)
 
-    def verify_transaction_validity(self, transaction: Transaction) -> bool:
+    def verify_transaction_validity(self, transaction: Transaction, verify_with_mempool=True) -> bool:
         """
         Verify the validity of the transaction.
         It will return False iff any of the following conditions hold:
@@ -291,10 +291,11 @@ class Node:
         except ecdsa.BadSignatureError:
             return False
 
-        # Verify that there is no contradicting transaction in the MemPool.
-        # This means a transaction that uses the input TxID (disallow double-spending).
-        if transaction.input in [tx.input for tx in self.mempool]:
-            return False
+        if verify_with_mempool:
+            # Verify that there is no contradicting transaction in the MemPool.
+            # This means a transaction that uses the input TxID (disallow double-spending).
+            if transaction.input in [tx.input for tx in self.mempool]:
+                return False
 
         return True
 
@@ -493,7 +494,7 @@ class Node:
         Append new chain to the end of the blockchain.
         This will also verify the validity of the blocks in the new chain,
         and truncate it if some block turned out to be invalid.
-        This will also remove the transactions in the MemPool that are now in the blockchain.
+        TODO remove This will also remove the transactions in the MemPool that are now in the blockchain.
         This will also handle the UTxO set properly.
         :param new_chain: The new chain to add to the blockchain.
         :param removed_transactions: The previously removed transactions.
@@ -520,15 +521,17 @@ class Node:
             # (*) Transactions that are money-creation (i.e. input is None).
             # (*) Transaction that already exist in our MemPool (it was verified when entering the MemPool,
             #     and the general validity check will fail because there is a contradicting transaction in the MemPool.
-            transactions_are_valid: bool = all(self.verify_transaction_validity(tx) for tx in transactions
-                                               if tx.input is not None and tx not in self.mempool)
+            transactions_are_valid: bool = all(self.verify_transaction_validity(tx, verify_with_mempool=False)
+                                               for tx in transactions if tx.input is not None)
 
             # If this block is not valid, discard it and the rest of the chain.
             if not (amount_of_money_creation_is_valid and transactions_are_valid and block_size_is_valid):
                 break
 
-            # Remove all the transactions in the MemPool that are in the current block we are adding to the blockchain.
-            self.mempool: List[Transaction] = [tx for tx in self.mempool if tx not in transactions]
+            # TODO verify it's not needed
+            # # Remove all the transactions in the MemPool that are in the current block we are adding to the blockchain.
+            # self.mempool: List[Transaction] = [tx for tx in self.mempool
+            #                                    if tx.input not in [t.input for t in transactions]]
 
             # Remove all the transactions in the removed_transactions list that are in the current block,
             # because they don't need to enter the MemPool later.
@@ -652,7 +655,8 @@ class Node:
             self.update_coins_according_to_new_chain([block for block in new_chain
                                                       if block.get_block_hash() in self.block_hash_to_index])
 
-            # Now try to add the transactions to the MemPool (no need to notify the connections).
+            # Remove transactions that cannot be executed now from the MemPool.
+            # This is done by trying to add the transactions to the MemPool (no need to notify the connections).
             transactions: List[Transaction] = self.mempool + removed_orig_transactions_not_in_new_chain
             self.clear_mempool()
             for transaction in transactions:
@@ -672,10 +676,6 @@ class Node:
         Append a new block to the blockchain, and handle the UTxO set accordingly.
 
         :param block: The block to append.
-        :param update_coins: Should we update the coins of this node according the the block.
-                                   Will be False when the block is being added is due to ReOrg
-                                   (i.e. transactions in the removed chain that are still valid and
-                                   can enter the blockchain).
         :return: The block-hash of the block that was added to the blockchain.
         """
         block_hash: BlockHash = block.get_block_hash()
