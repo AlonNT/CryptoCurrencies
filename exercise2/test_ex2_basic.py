@@ -519,6 +519,8 @@ def test_same_tx_in_both_chains(alice: Node, bob: Node, charlie: Node) -> None:
     assert bob.get_balance() == 3
 
 
+########################## MORE TESTS ############################################
+
 def test_should_not_replace_in_block_hash_not_correct(alice: Node, bob: Node, charlie: Node, monkeypatch: Any) -> None:
     alice_hash = alice.mine_block()
     h1 = bob.mine_block()
@@ -535,8 +537,223 @@ def test_should_not_replace_in_block_hash_not_correct(alice: Node, bob: Node, ch
     assert alice.get_latest_hash() == alice_hash
 
 
+def test_detect_cycle_in_notify(alice: Node, bob: Node, charlie: Node, monkeypatch: Any) -> None:
+    alice_hash = alice.mine_block()
+    h1 = bob.mine_block()
+    block1 = bob.get_block(h1)
+    h2 = bob.mine_block()
+    block2 = bob.get_block(h2)
+    h3 = bob.mine_block()
+    block3 = bob.get_block(h3)
+    blocks = {h1: block1, h2: Block(block2.get_block_hash(), []), h3: block3}
+
+    monkeypatch.setattr(bob, "get_block", lambda block_hash: blocks[block_hash])
+
+    alice.connect(bob)
+    assert alice.get_latest_hash() == alice_hash
+
+
+def test_should_replace_only_2_block(alice: Node, bob: Node, charlie: Node,
+                                     monkeypatch: Any) -> None:
+    alice.mine_block()
+    alice_tx = alice.create_transaction(bob.get_address())
+    h1 = bob.mine_block()
+    block1 = bob.get_block(h1)
+    h2 = bob.mine_block()
+    block2 = bob.get_block(h2)
+    h3 = bob.mine_block()
+    block3 = bob.get_block(h3)
+    h4 = bob.mine_block()
+    block4 = bob.get_block(h4)
+    h5 = bob.mine_block()
+    block5 = bob.get_block(h5)
+    false_block = Block(block2.get_block_hash(), [])
+    blocks = {h1: block1, h2: block2, h3: false_block, h4: block4, h5: block5}
+
+    monkeypatch.setattr(false_block, "get_block_hash", lambda: block3.get_block_hash())
+    monkeypatch.setattr(bob, "get_block", lambda block_hash: blocks[block_hash])
+
+    alice.connect(bob)
+    assert alice_tx not in alice.get_utxo()
+    assert alice.get_latest_hash() == h2
+
+
+########################################################################
+# tests from Neta Kenneth Portal
+########################################################################
+
+def test_same_node_not_added_twice(alice: Node, bob: Node) -> None:
+    alice.connect(bob)
+    alice.connect(bob)
+    assert len(alice.get_connections()) == 1 and bob in alice.get_connections()
+    assert len(bob.get_connections()) == 1 and alice in bob.get_connections()
+
+
+def test_disconnect_from_non_connection(alice: Node, bob: Node, charlie: Node) -> None:
+    alice.connect(charlie)
+    alice_connections = alice.get_connections()
+    alice.disconnect_from(bob)
+    assert alice.get_connections() == alice_connections
+
+
+def test_none_transaction_not_propagated(alice: Node, bob: Node) -> None:
+    alice.connect(bob)
+    assert not alice.create_transaction(bob.get_address())
+    assert len(bob.get_mempool()) == 0
+
+
+def test_chain_not_changed_on_tie(alice: Node, bob: Node) -> None:
+    h1 = alice.mine_block()
+    h2 = bob.mine_block()
+    alice.connect(bob)
+    assert alice.get_latest_hash() == h1
+    assert bob.get_latest_hash() == h2
+    with pytest.raises(ValueError):
+        alice.get_block(h2)
+    with pytest.raises(ValueError):
+        bob.get_block(h1)
+
+
+def test_reorg_removes_mempool_txns(alice: Node, bob: Node) -> None:
+    alice.connect(bob)
+    alice.mine_block()
+    txn = alice.create_transaction(bob.get_address())
+    alice.disconnect_from(bob)
+    alice.mine_block()
+    assert txn in bob.get_mempool()
+    bob.notify_of_block(alice.get_latest_hash(), alice)
+    assert bob.get_latest_hash() == alice.get_latest_hash()
+    assert len(bob.get_mempool()) == 0
+
+
+def test_adding_block_with_double_spend(alice: Node, bob: Node, make_key: KeyFactory,
+                                        evil_node_maker: EvilNodeMaker) -> None:
+    alice.mine_block()
+    transactions = []
+    transactions.append(alice.create_transaction(bob.get_address()))
+    alice.clear_mempool()
+    transactions.append(alice.create_transaction(bob.get_address()))
+    transactions.append(Transaction(make_key(), None, Signature(secrets.token_bytes(48))))
+    block = Block(bob.get_latest_hash(), transactions)
+    eve = evil_node_maker([block])
+    bob.notify_of_block(eve.get_latest_hash(), eve)
+    with pytest.raises(ValueError):
+        bob.get_block(block.get_block_hash())
+    assert bob.get_latest_hash() != block.get_block_hash()
+
+
+def test_information_propagation(alice: Node, bob: Node, charlie: Node) -> None:
+    alice.connect(bob)
+    alice.connect(charlie)
+    charlie.mine_block()
+    assert bob.get_latest_hash() == charlie.get_latest_hash()
+    bob.mine_block()
+    assert bob.get_latest_hash() == charlie.get_latest_hash()
+
+    txn = charlie.create_transaction(alice.get_address())
+    assert txn in bob.get_mempool()
+
+
+def test_too_many_transactions_in_block(bob: Node, alice: Node, evil_node_maker: EvilNodeMaker) -> None:
+    bob.connect(alice)
+    for i in range(BLOCK_SIZE):
+        alice.mine_block()
+    bob.disconnect_from(alice)
+    for i in range(BLOCK_SIZE - 1):
+        alice.create_transaction(bob.get_address())
+    h = alice.mine_block()
+    block = alice.get_block(h)
+
+    bad_block = Block(block.get_prev_block_hash(), block.get_transactions() +
+                      [alice.create_transaction(bob.get_address())])
+    assert (len(bad_block.get_transactions())) == BLOCK_SIZE + 1
+
+    bob_latest_hash = bob.get_latest_hash()
+    eve = evil_node_maker([bad_block])
+    bob.notify_of_block(eve.get_latest_hash(), eve)
+    assert bob.get_latest_hash() == bob_latest_hash
+    with pytest.raises(ValueError):
+        bob.get_block(bad_block.get_block_hash())
+
+
+def test_dont_add_block_with_transaction_with_bad_input(alice: Node, bob: Node, evil_node_maker: EvilNodeMaker,
+                                                        make_key: KeyFactory) -> None:
+    bob.connect(alice)
+    bob.mine_block()
+    txn = bob.create_transaction(alice.get_address())
+    alice.mine_block()
+
+    bad_block = Block(alice.get_latest_hash(), [txn, Transaction(make_key(), None, Signature(secrets.token_bytes(48)))])
+
+    alice_latest_hash = alice.get_latest_hash()
+    eve = evil_node_maker([bad_block])
+    alice.notify_of_block(eve.get_latest_hash(), eve)
+    assert alice.get_latest_hash() == alice_latest_hash
+    with pytest.raises(ValueError):
+        alice.get_block(bad_block.get_block_hash())
+
+
+def test_block_size(bob: Node, alice: Node):
+    for i in range(BLOCK_SIZE + 4):
+        bob.mine_block()
+
+    for i in range(BLOCK_SIZE + 4):
+        bob.create_transaction(alice.get_address())
+
+    last5 = bob.get_mempool()[-5:]
+    bob.mine_block()
+    assert len(bob.get_mempool()) == 5
+    assert set(last5) == set(bob.get_mempool())
+
+
+def test_transactions_not_frozen_after_mempool_clear(alice: Node, bob: Node):
+    alice.mine_block()
+    alice.create_transaction(bob.get_address())
+    alice.clear_mempool()
+    assert alice.create_transaction(bob.get_address()) is not None
+
+
+def test_rollback_after_bad_chain(alice: Node, bob: Node, charlie: Node, make_key: KeyFactory,
+                                  evil_node_maker: EvilNodeMaker):
+    bob.connect(charlie)
+    for i in range(3):  # bob and charlie have a good chain of length 3
+        bob.mine_block()
+        bob.create_transaction(charlie.get_address())
+
+    blocks = []
+    for i in range(2):  # alice has a good chain of length 2
+        h = alice.mine_block()
+        blocks.append(alice.get_block(h))
+        alice.create_transaction(bob.get_address())
+
+    prev_hash = alice.get_latest_hash()
+    for i in range(5):  # add bad blocks to alice's chain
+        blocks.append(Block(prev_hash, [Transaction(make_key(), None, Signature(secrets.token_bytes(48))),
+                                        Transaction(make_key(), None, Signature(secrets.token_bytes(48)))]))
+        prev_hash = blocks[len(blocks) - 1].get_block_hash()
+
+    eve = evil_node_maker(blocks)
+    # uncomment if you want to check that you roll back the mempool:
+    # mempool = bob.get_mempool().copy()
+    utxo = bob.get_utxo().copy()
+    latest_hash = bob.get_latest_hash()
+    # You can back up more private members that you want to check are properly rolled back here
+    # (e.g. the blocks in the blockchain)
+
+    bob.notify_of_block(eve.get_latest_hash(), eve)  # notify bob of the evil chain - he should not change his chain
+
+    assert set(bob.get_utxo()) == set(utxo)
+    # uncomment if you want to check that you roll back the mempool:
+    # assert set(bob.get_mempool()) == set(mempool)
+    assert latest_hash == bob.get_latest_hash()
+    # You can test any more private members that you backed up here
+
+########################################################################
+# end of tests from Neta Kenneth Portal
+########################################################################
+
+
 def test_add_block_with_mempool_contradiction(alice: Node, bob: Node) -> None:
-    # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO # TODO
     alice.connect(bob)
     alice.mine_block()
     txn = alice.create_transaction(bob.get_address())
@@ -550,3 +767,60 @@ def test_add_block_with_mempool_contradiction(alice: Node, bob: Node) -> None:
     bob.notify_of_block(alice.get_latest_hash(), alice)
     assert bob.get_latest_hash() == alice.get_latest_hash()
     assert len(bob.get_mempool()) == 0
+
+
+def test_block_with_no_money_making_transactions(alice: Node, bob: Node, evil_node_maker: EvilNodeMaker) -> None:
+    alice.connect(bob)
+    blocks = []
+    for i in range(3):
+        h = alice.mine_block()
+        blocks.append(alice.get_block(h))
+    alice.disconnect_from(bob)
+    transactions = [alice.create_transaction(bob.get_address()) for i in range(3)]
+    #TODO Check this
+    # assert None not in transactions
+    assert len(bob.get_mempool()) == 0
+    assert len(bob.get_utxo()) == 3
+    bob_latest_hash = bob.get_latest_hash()
+    assert bob_latest_hash == blocks[len(blocks) - 1].get_block_hash()
+    blocks.append(Block(bob_latest_hash, transactions))
+    eve = evil_node_maker(blocks)
+    bob.notify_of_block(eve.get_latest_hash(), eve)
+    assert bob.get_latest_hash() == bob_latest_hash
+
+# TODO its not allow to override the get_block_hash method
+# def test_bob_serves_block_with_wrong_hash(alice: Node, charlie: Node, monkeypatch: Any) -> None:
+#     h1 = charlie.mine_block()
+#     block = charlie.get_block(h1)
+#
+#     monkeypatch.setattr(block, "get_block_hash", lambda: "false_hash")
+#     monkeypatch.setattr(charlie, "get_block", lambda block_hash: block)
+#
+#     alice.connect(charlie)
+#     assert alice.get_latest_hash() == GENESIS_BLOCK_PREV
+#     assert alice.get_utxo() == []
+
+# def test_longer_chain_with_invalid_block_hash(alice: Node, bob: Node) -> Node:
+#     alice.connect(bob)
+#     h1 = alice.mine_block()
+#     block1 = alice.get_block(h1)
+#     assert bob.get_latest_hash() == h1
+#     alice.disconnect_from(bob)
+#
+#     h2 = bob.mine_block()
+#     h3 = bob.mine_block()
+#     assert alice.get_latest_hash() == h1
+#     assert bob.get_latest_hash() == h3
+#
+#     # Gets the third block and change the transactions in it
+#     block3 = bob.get_block(h3)
+#     assert block3 is not None
+#
+#     # Change the transactions in the third block by deleting the transactions from this block
+#     block3.transactions = []
+#     assert block3.get_block_hash() != h3
+#
+#     alice.notify_of_block(h3, bob)
+#
+#     # The second block that bob mined is valid and need to be updated in alice's blockcahin
+#     assert alice.get_latest_hash() == h2
