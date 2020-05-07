@@ -1,9 +1,11 @@
 import sys
-from typing import List, Optional, NewType, Set, Dict, Deque, Tuple
+from typing import List, Optional, NewType, Set, Dict, Tuple
 import ecdsa  # type: ignore
 import hashlib
 import secrets
 from collections import deque
+
+from typing_extensions import Deque
 
 PublicKey = NewType('PublicKey', bytes)
 Signature = NewType('Signature', bytes)
@@ -337,13 +339,7 @@ class Node:
         """
         new_chain: List[Block] = list()
 
-        # Maintain a set of all block hashes, to avoid a circle (which will cause an infinite loop). TODO remove?
-        already_seen_block_hashes_set: Set[BlockHash] = set()
-
         while (block_hash not in self.block_hash_to_index) and (block_hash != GENESIS_BLOCK_PREV):
-            # If the block_hash was already seen this means there is a circle in the new blockchain. TODO remove?
-            if block_hash in already_seen_block_hashes_set:
-                return list()
 
             try:
                 block: Block = sender.get_block(block_hash)
@@ -355,7 +351,6 @@ class Node:
                 return list()
 
             new_chain.append(block)
-            already_seen_block_hashes_set.add(block_hash)
             block_hash: BlockHash = block.get_prev_block_hash()
 
         # Reverse the new chain, because we appended the previous block to the right.
@@ -382,8 +377,6 @@ class Node:
         for tx in block.get_transactions():
             if tx.get_txid() == txid:
                 return tx
-
-        assert False, "The transaction was not found in the blockchain."
 
     def get_relevant_transactions_from_removed_chain(self, removed_chain: List[Block]) -> Tuple[List[TxID],
                                                                                                 List[Transaction]]:
@@ -461,17 +454,13 @@ class Node:
         :param common_ancestor: The block hash that will be the last block in the new blockchain.
         :return: A list of transactions that were removed from the blockchain (will be added to the MemPool later).
         """
-        assert (common_ancestor == GENESIS_BLOCK_PREV) or (common_ancestor in self.block_hash_to_index), \
-            "The previous block of the first block in the new chain must exist in the current node's chain."
 
         removed_chain: List[Block] = list()
         curr_hash: BlockHash = self.get_latest_hash()
 
         while curr_hash != common_ancestor:
-            assert self.block_hash_to_index[curr_hash] == len(self.blockchain) - 1, \
-                "We are removing blocks from the end of the blockchain. " \
-                "Otherwise the block_hash_to_index will be wrong."
 
+            # Get the block that corresponds to the current BlockHash
             block: Block = self.blockchain[self.block_hash_to_index[curr_hash]]
             removed_chain.append(block)
 
@@ -494,7 +483,6 @@ class Node:
         Append new chain to the end of the blockchain.
         This will also verify the validity of the blocks in the new chain,
         and truncate it if some block turned out to be invalid.
-        TODO remove This will also remove the transactions in the MemPool that are now in the blockchain.
         This will also handle the UTxO set properly.
         :param new_chain: The new chain to add to the blockchain.
         :param removed_transactions: The previously removed transactions.
@@ -502,8 +490,6 @@ class Node:
                  where a transaction is removed if it's contained in a new block.
         """
         for block in new_chain:
-            assert block.get_block_hash() not in self.block_hash_to_index, \
-                "block is already in the blockchain"
 
             transactions: List[Transaction] = block.get_transactions()
 
@@ -527,11 +513,6 @@ class Node:
             # If this block is not valid, discard it and the rest of the chain.
             if not (amount_of_money_creation_is_valid and transactions_are_valid and block_size_is_valid):
                 break
-
-            # TODO verify it's not needed
-            # # Remove all the transactions in the MemPool that are in the current block we are adding to the blockchain.
-            # self.mempool: List[Transaction] = [tx for tx in self.mempool
-            #                                    if tx.input not in [t.input for t in transactions]]
 
             # Remove all the transactions in the removed_transactions list that are in the current block,
             # because they don't need to enter the MemPool later.
@@ -569,8 +550,6 @@ class Node:
                            (the first block in the tail is the block with previous block hash equal to this block_hash).
         :return: The length of the tail (zero of the block already exists in the blockchain.
         """
-        assert (block_hash == GENESIS_BLOCK_PREV) or (block_hash in self.block_hash_to_index), \
-            "The given block_hash does not exist in the blockchain."
 
         length_of_current_chain: int = 0
         curr_hash: BlockHash = self.get_latest_hash()
@@ -587,13 +566,8 @@ class Node:
         :param new_chain: The new chain to find the common ancestor.
         :return: the block-hash of the common ancestor.
         """
-        assert len(new_chain) > 0, "Can not get the common ancestor of the blockchain and an empty new_chain."
 
         common_ancestor: BlockHash = new_chain[0].get_prev_block_hash()
-
-        assert (common_ancestor == GENESIS_BLOCK_PREV) or (common_ancestor in self.block_hash_to_index), \
-            "The previous block of the first block in the new chain must exist in the current node's chain."
-
         return common_ancestor
 
     def notify_of_block(self, block_hash: BlockHash, sender: 'Node') -> None:
@@ -616,7 +590,6 @@ class Node:
         """
         new_chain: List[Block] = self.build_alternative_chain(block_hash, sender)
 
-        # TODO should we notify of a block that was already in our blockchain? i.e. the original given block_hash is already in the blockchain.
         # If the new chain is empty it means that the given block-hash was already in our blockchain,
         # and therefore no need to update anything.
         if len(new_chain) == 0:
@@ -640,8 +613,6 @@ class Node:
             self.remove_existing_chain(common_ancestor_hash)
             removed_orig_transactions: List[Transaction] = self.append_new_chain(removed_orig_chain,
                                                                                  removed_orig_transactions)
-
-            assert len(removed_orig_transactions) == 0, "All removed transactions should be back in the blockchain."
 
         else:
             # The alternative chain is longer than the original one, notify connections
@@ -707,7 +678,6 @@ class Node:
         If a new block is created, all connections of this node are notified by calling their notify_of_block() method.
         The method returns the new block hash.
         """
-        # TODO What does it mean "If a new block is created"? How can mining a block not succeed?
 
         # The transactions that will be added to the blockchain are the first limit transactions in the MemPool.
         transactions_to_add: List[Transaction] = self.mempool[:BLOCK_SIZE-1]
@@ -783,10 +753,7 @@ class Node:
                                                tx_input=selected_coin,
                                                signature=self.private_key.sign(target + selected_coin))
 
-        addition_to_mempool_was_successful: bool = self.add_transaction_to_mempool(transaction)
-
-        assert addition_to_mempool_was_successful, "Addition to the MemPool failed. WTF?"
-
+        self.add_transaction_to_mempool(transaction)
         return transaction
 
     def clear_mempool(self) -> None:
