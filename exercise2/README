@@ -16,4 +16,5 @@ ex2.py - Implementaion of the second exercise.
 Remarks
 -------
 * In this project we implemented prototype of a secure payment system,
-while in the first exercise we had single trusted authority (the Bank), int this project we replaced the Bank with nodes running according to the longest-chain protocol.
+while in the first exercise we had single trusted authority (the Bank), in this project we replaced the Bank with nodes that 
+running according to the longest-chain protocol.
