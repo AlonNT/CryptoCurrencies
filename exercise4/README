@@ -1,0 +1,19 @@
+daniel023, alonnetser
+===============================================================================
+Daniel Afrimi, ID 203865837, daniel.afrimi@mail.huji.ac.il
+Alon Netser, ID 311602536, alon.netser@mail.huji.ac.il
+===============================================================================
+
+                                  Project 2
+                           ----------------------- 
+  
+
+Submitted Files
+---------------
+README - This file.
+ex2.py - Implementaion of the second exercise.
+
+Remarks
+-------
+* In this project we implemented prototype of a secure payment system,
+while in the first exercise we had single trusted authority (the Bank), int this project we replaced the Bank with nodes running according to the longest-chain protocol.
