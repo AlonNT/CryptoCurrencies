@@ -7,8 +7,8 @@ contract Malicious {
 
     event Deposit(address sender, uint amount);
 
-    constructor() public {
-        auction = Auction(0xebD4b40e3c4a5bdE8DD3F83b89C17D628644f9b3);
+    constructor(address auctionAddress) public {
+        auction = Auction(auctionAddress);
     }
 
     function maliciousBid(string memory name) public payable {
