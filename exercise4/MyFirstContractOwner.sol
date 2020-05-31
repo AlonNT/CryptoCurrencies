@@ -4,7 +4,7 @@ contract MyFirstContract{
     
     int private val;
     string private name;
-    address public owner;
+    address private owner;
 
     event NewValue(int value, string p_name);
     
