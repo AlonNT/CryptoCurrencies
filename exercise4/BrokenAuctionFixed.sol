@@ -6,17 +6,18 @@ contract Auction {
     uint private highestBid;
     address payable private owner;
     mapping (address => uint) pendingWithdrawals;
-
+    bool auctionEnded;  // It is initialized as false by default.
 
     constructor() public payable {
         owner = msg.sender;
     }
 
     function bid(string memory name) public payable {
-        require(msg.value >= highestBid);
+        require(!auctionEnded, "Too late, the auction was ended.");
+        require(msg.value >= highestBid, "There is already a higher bid, try harder!");
 
         if (highestBidder != address(0)) {
-            pendingWithdrawals[highestBidder] += msg.value;
+            pendingWithdrawals[highestBidder] += highestBid;
             highest_Bidder_name = name;
         }
 
@@ -26,13 +27,14 @@ contract Auction {
 
     function withdraw() public {
         uint amount = pendingWithdrawals[msg.sender];
-        // Remember to zero the pending refund before sending to prevent re-entrancy attacks
         pendingWithdrawals[msg.sender] = 0;
         msg.sender.transfer(amount);
     }
 
-    function terminate_auction() external payable {
-        require(msg.sender == owner);
+    function end_auction() external payable {
+        require(msg.sender == owner, "You are not the owner of the auction, so you can not end it.");
+        require(!auctionEnded, "The auction was already ended, so you can not end it.");
+        auctionEnded = true;
         owner.transfer(highestBid);
     }
 
@@ -47,5 +49,4 @@ contract Auction {
     function get_bidder_name() view external returns(string memory){
         return highest_Bidder_name;
     }
-
 }

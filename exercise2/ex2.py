@@ -5,7 +5,6 @@ import hashlib
 import secrets
 from collections import deque
 
-from typing_extensions import Deque
 
 PublicKey = NewType('PublicKey', bytes)
 Signature = NewType('Signature', bytes)
@@ -46,7 +45,7 @@ def get_transactions_hash(transactions: List['Transaction']) -> bytes:
     # Now we know that there are at least 2 transactions in the block, so let's create the merkle-tree.
 
     # The will serve as a queue (FIFO data-structure) to process the tree from to bottom to the top.
-    curr_queue: Deque[bytes] = deque([bytes(tx.get_txid()) for tx in transactions])
+    curr_queue = deque([bytes(tx.get_txid()) for tx in transactions])
 
     # As long as the queue contains at least 2 elements, hash every pair and insert
     # it to the right hand-side of the queue.
@@ -276,6 +275,9 @@ class Node:
         (iii) There is contradicting tx in the mempool.
 
         :param transaction: The transaction to check validity.
+        :param verify_with_mempool: Whether to verify that there is no contradicting tx in the MemPool or not.
+                                    Will be true when adding a tx to our MemPool, and will be False when validating
+                                    the txs of a new given chain (since their txs are not in our MemPool).
         :return: False iff any of the above conditions hold.
         """
         input_tx_index_in_utxo: int = self.get_tx_index_in_utxo(transaction)
@@ -611,8 +613,7 @@ class Node:
         if length_of_current_chain_tail >= length_of_alternative_chain_tail:
             # The alternative chain is not longer than the original one, so revert the changes.
             self.remove_existing_chain(common_ancestor_hash)
-            removed_orig_transactions: List[Transaction] = self.append_new_chain(removed_orig_chain,
-                                                                                 removed_orig_transactions)
+            self.append_new_chain(removed_orig_chain, removed_orig_transactions)
 
         else:
             # The alternative chain is longer than the original one, notify connections
