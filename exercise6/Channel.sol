@@ -133,7 +133,7 @@ contract Channel {
     
     function verify_sig(uint256 balance, int8 serial_num, 
     	                uint8 v, bytes32 r, bytes32 s, address signerPubKey) 
-             pure public returns (bool) {
+             view public returns (bool) {
         bytes32 hashMessage = keccak256(abi.encodePacked(address(this), 
         	                            balance, serial_num));
         bytes32 messageDigest = keccak256(
