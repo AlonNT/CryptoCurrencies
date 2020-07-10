@@ -34,7 +34,7 @@
   There are several possibilities, such as 50-50 or relative to the current state of the channel 
   (which is known to the two parties). 
   - Our guess is that it splits relative to the current state of the channel. **TODO: VERIFY** 
-- How do nodes in the Lightning network discover the structure of the network's graph? 
+- How do nodes in the Lightning network discover the structure of the network's graph? [Answer](https://bitcoin.stackexchange.com/questions/87585/how-do-new-nodes-learn-the-topology-of-lightning-network)
   - This includes the nodes, channels, and their capacities. 
   - Maybe they discover it from their neighbors (that discover it from their neighbors, etc). 
   - When does this information updated?
