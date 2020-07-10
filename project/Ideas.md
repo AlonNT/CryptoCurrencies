@@ -2,6 +2,7 @@
 ## References
 - Hijacking Routes in Payment Channel Networks: A Predictability Tradeoff
    - [paper](https://arxiv.org/pdf/1909.06890.pdf)
+   - [medium post](https://medium.com/blockchains-huji/route-hijacking-and-dos-in-off-chain-networks-37ce6f54aa26)
    - [code](https://github.cs.huji.ac.il/saart/saart-lightning)
 - Congestion Attacks in Payment Channel Networks
    - [paper](https://arxiv.org/pdf/2002.06564.pdf)
